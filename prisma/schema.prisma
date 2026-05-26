@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Employee {
+  id          String   @id @default(cuid())
+  employeeId  String   @unique
+  name        String
+  department  String
+  position    String
+  role        String   @default("employee")  // employee | pm | pd | admin
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  timesheets     Timesheet[]
+  auditLogs      AuditLog[]
+  managedProjects Project[]      @relation("ProjectManager")
+  resourcePlans  ResourcePlan[]
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  projectNumber String   @unique
+  projectName   String
+  projectType   String   @default("project")
+  isActive      Boolean  @default(true)
+  managerId     String?
+
+  manager       Employee?      @relation("ProjectManager", fields: [managerId], references: [id])
+  entries       TimesheetEntry[]
+  resourcePlans ResourcePlan[]
+}
+
+model TaskCode {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  category  String
+  isActive  Boolean  @default(true)
+
+  entries TimesheetEntry[]
+}
+
+model Timesheet {
+  id          String    @id @default(cuid())
+  employeeId  String
+  weekStart   DateTime
+  weekEnd     DateTime
+  status      String    @default("draft")
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  employee Employee         @relation(fields: [employeeId], references: [id])
+  entries  TimesheetEntry[]
+}
+
+model TimesheetEntry {
+  id           String  @id @default(cuid())
+  timesheetId  String
+  projectId    String
+  taskCodeId   String
+  monHrs       Float   @default(0)
+  tueHrs       Float   @default(0)
+  wedHrs       Float   @default(0)
+  thuHrs       Float   @default(0)
+  friHrs       Float   @default(0)
+  satHrs       Float   @default(0)
+  sunHrs       Float   @default(0)
+  totalHrs     Float   @default(0)
+
+  timesheet Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id])
+  taskCode  TaskCode  @relation(fields: [taskCodeId], references: [id])
+}
+
+// PM/PD วางแผนทรัพยากร: ระบุว่าต้องการกี่ชั่วโมงต่อสัปดาห์ต่อคน
+model ResourcePlan {
+  id          String   @id @default(cuid())
+  projectId   String
+  employeeId  String
+  weekStart   DateTime
+  plannedHrs  Float    @default(0)
+  createdBy   String   // employee ID of PM/PD who created this
+  updatedAt   DateTime @updatedAt
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([projectId, employeeId, weekStart])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  employeeId String
+  action     String
+  detail     String   @default("")
+  timestamp  DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+}

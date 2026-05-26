@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-50 text-gray-900;
+  font-family: 'Inter', Arial, Helvetica, sans-serif;
+}
+
+.ges-card {
+  @apply bg-white rounded-xl shadow-sm border border-gray-200;
+}
+
+.ges-btn-primary {
+  @apply bg-blue-900 hover:bg-blue-800 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.ges-btn-secondary {
+  @apply bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors;
+}
+
+.ges-btn-danger {
+  @apply bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded-lg transition-colors text-sm;
+}
+
+.ges-input {
+  @apply w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+}
+
+.ges-table th {
+  @apply bg-blue-900 text-white text-xs font-semibold px-3 py-2 text-center whitespace-nowrap;
+}
+
+.ges-table td {
+  @apply border-b border-gray-100 px-2 py-1.5 text-sm;
+}
+
+.ges-table tr:hover td {
+  @apply bg-blue-50;
+}
+
+.status-draft {
+  @apply bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-0.5 rounded-full;
+}
+
+.status-submitted {
+  @apply bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5 rounded-full;
+}
+
+.status-missing {
+  @apply bg-red-100 text-red-800 text-xs font-medium px-2 py-0.5 rounded-full;
+}
+
+.hours-input {
+  @apply w-14 text-center border border-gray-200 rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 bg-transparent;
+}
