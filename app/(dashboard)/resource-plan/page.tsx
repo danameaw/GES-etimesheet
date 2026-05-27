@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useTransition } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
@@ -54,7 +54,10 @@ export default function ResourcePlanPage() {
   const [loadingEmp, setLoadingEmp]                   = useState(false);
   const [empSearch, setEmpSearch]                     = useState("");
   const [showEmpDropdown, setShowEmpDropdown]         = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg]                     = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [importing, startImport]                      = useTransition();
+  const searchRef  = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load department plan ──
   const load = useCallback(async (projectId?: string) => {
@@ -169,6 +172,26 @@ export default function ResourcePlanPage() {
     load(selectedProject);
   }
 
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !selectedProject) return;
+    e.target.value = ""; // reset so same file can be re-uploaded
+    setImportMsg(null);
+    startImport(async () => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("projectId", selectedProject);
+      const res  = await fetch("/api/resource-plan-monthly/import", { method: "POST", body: form });
+      const data = await res.json();
+      if (res.ok) {
+        setImportMsg({ type: "success", text: data.message });
+        load(selectedProject);
+      } else {
+        setImportMsg({ type: "error", text: data.error || "นำเข้าไม่สำเร็จ" });
+      }
+    });
+  }
+
   // ── Dept totals ──
   const deptTotals        = departments.map((d) => months.reduce((s, m) => s + getPlanned(d, m.year, m.month), 0));
   const monthTotals       = months.map((m) => departments.reduce((s, d) => s + getPlanned(d, m.year, m.month), 0));
@@ -280,11 +303,18 @@ export default function ResourcePlanPage() {
                       <p className="text-xs text-gray-500">จริงรวม</p>
                     </div>
                     <div className="w-px h-8 bg-gray-200" />
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                      {/* Hidden file input */}
+                      <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden"
+                        onChange={handleImportFile} />
                       <a href={`/api/resource-plan-monthly/template?projectId=${selectedProject}`}
                         className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
                         📥 Excel Template
                       </a>
+                      <button onClick={() => fileInputRef.current?.click()} disabled={importing}
+                        className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap border-green-300 text-green-700 hover:bg-green-50">
+                        {importing ? "กำลัง Import…" : "📤 Import Excel"}
+                      </button>
                       {planStatus !== "approved" && (
                         <button onClick={submitPlan} disabled={saving === "submit" || grandTotal === 0}
                           className="ges-btn-primary text-xs px-3 py-1.5">
@@ -295,6 +325,16 @@ export default function ResourcePlanPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Import message */}
+              {importMsg && (
+                <div className={`px-4 py-3 rounded-lg text-sm flex items-center justify-between ${
+                  importMsg.type === "success" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"
+                }`}>
+                  <span>{importMsg.type === "success" ? "✅" : "❌"} {importMsg.text}</span>
+                  <button onClick={() => setImportMsg(null)} className="text-gray-400 hover:text-gray-600 ml-4">✕</button>
+                </div>
+              )}
 
               {/* View Toggle */}
               <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
