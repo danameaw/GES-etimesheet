@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { addDays } from "date-fns";
 
 // GET: admin fetches any employee's timesheet for editing
 export async function GET(req: NextRequest) {
@@ -17,7 +16,6 @@ export async function GET(req: NextRequest) {
   if (!empId || !weekParam) return NextResponse.json({ error: "Missing empId or week" }, { status: 400 });
 
   const weekStart = new Date(weekParam + "T00:00:00.000Z");
-  const weekEnd = addDays(weekStart, 6);
 
   const employee = await prisma.employee.findUnique({
     where: { id: empId },

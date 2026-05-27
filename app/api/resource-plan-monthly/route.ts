@@ -104,7 +104,6 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
-  const empDbId = (session.user as any).id;
 
   if (!["pm", "pd", "admin"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

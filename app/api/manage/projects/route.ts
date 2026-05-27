@@ -10,7 +10,7 @@ async function requireAdmin(session: any) {
   return null;
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const session = await getServerSession(authOptions);
   const err = await requireAdmin(session);
   if (err) return err;

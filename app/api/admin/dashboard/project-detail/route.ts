@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Build timesheet date filter for the selected period
-  let timesheetWhere: any = {
+  const timesheetWhere: any = {
     status: { in: ["submitted", "approved"] },
     entries: { some: { projectId } },
   };

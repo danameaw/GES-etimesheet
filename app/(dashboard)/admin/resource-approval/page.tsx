@@ -40,14 +40,7 @@ export default function ResourceApprovalPage() {
     const data = await res.json();
 
     const projects: Project[] = data.projects || [];
-    const allPlans: PlanRow[] = data.plans || [];
-
-    // Wait — the API without projectId returns plans=[] (only returns plans when projectId is specified).
-    // We need to fetch plans for all projects. Let me handle this differently.
-    // Actually, let me just fetch plans per project in a single call (which the API already does if we pass no projectId).
-    // But looking at the API code, plans are only returned when projectId is specified.
-    // For the approval page, let me call with each projectId, or add a ?all=true param.
-    // For now, let me do one fetch per project.
+    // Fetch plans per project (the API only returns plans when projectId is specified)
 
     const groupResults: ProjectGroup[] = [];
     for (const proj of projects) {
