@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
 
   // Group actual per department
   const actualByDept: Record<string, number> = {};
-  for (const v of empActualMap.values()) {
+  for (const v of Array.from(empActualMap.values())) {
     actualByDept[v.department] = (actualByDept[v.department] || 0) + v.actualHrs;
   }
 

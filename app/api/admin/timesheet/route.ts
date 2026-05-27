@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { addDays } from "date-fns";
 
 // GET: admin fetches any employee's timesheet for editing
 export async function GET(req: NextRequest) {

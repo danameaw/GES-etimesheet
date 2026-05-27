@@ -8,7 +8,7 @@ import {
   CategoryScale, LinearScale, BarElement, ArcElement,
   PointElement, LineElement, Title, Tooltip, Legend,
 } from "chart.js";
-import { Bar, Doughnut } from "react-chartjs-2";
+import { Bar, Doughnut, Chart } from "react-chartjs-2";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -294,7 +294,8 @@ export default function DashboardPage() {
                 </h2>
                 <p className="text-xs text-gray-400 mb-4">ชั่วโมงที่ส่งจริง (แท่ง) และ % utilization เทียบ 40h/คน (เส้น)</p>
                 <div style={{ height: 230 }}>
-                  <Bar
+                  <Chart
+                    type="bar"
                     data={{
                       labels: data.weeklyTrend.map((w) => w.week),
                       datasets: [
