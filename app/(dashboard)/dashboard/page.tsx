@@ -33,10 +33,12 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const isAdmin = (session?.user as any)?.role === "admin";
+  const role = (session?.user as any)?.role;
+  const isAdmin = role === "admin";
+  const canView = ["admin", "pd"].includes(role);
   useEffect(() => {
-    if (session && !isAdmin) router.push("/timesheet");
-  }, [session, isAdmin, router]);
+    if (session && !canView) router.push("/timesheet");
+  }, [session, canView, router]);
 
   useEffect(() => {
     fetch("/api/admin/dashboard")
@@ -44,7 +46,7 @@ export default function DashboardPage() {
       .then((d) => { setData(d); setLoading(false); });
   }, []);
 
-  if (!isAdmin) return null;
+  if (!canView) return null;
 
   if (loading) {
     return (

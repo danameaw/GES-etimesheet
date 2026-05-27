@@ -6,7 +6,7 @@ import { format, startOfWeek, addWeeks, subWeeks } from "date-fns";
 
 interface Employee { id: string; employeeId: string; name: string; department: string; position: string; }
 interface Project { id: string; projectNumber: string; projectName: string; manager: { id: string; name: string; employeeId: string } | null; }
-interface ResourcePlan { id: string; projectId: string; employeeId: string; weekStart: string; plannedHrs: number; employee: Employee; }
+interface ResourcePlan { id: string; projectId: string; employeeId: string; weekStart: string; plannedHrs: number; planStatus: string; employee: Employee; }
 interface ActualEntry { id: string; projectId: string; totalHrs: number; timesheet: { employee: Employee & { department: string } }; }
 interface ResourceRow { employee: Employee; planId?: string; plannedHrs: number; actualHrs: number; }
 
@@ -99,6 +99,18 @@ export default function ResourcePlanPage() {
     loadWeekData(selectedProject);
   }
 
+  async function submitPlan() {
+    if (!selectedProject) return;
+    setSaving("submit");
+    await fetch("/api/resource-plan", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "submit", projectId: selectedProject, weekStart: format(currentWeek, 'yyyy-MM-dd') }),
+    });
+    setSaving(null);
+    await loadWeekData(selectedProject);
+  }
+
   async function handleAddMember() {
     if (!addEmpId || !selectedProject) return;
     setSaving("add");
@@ -180,10 +192,24 @@ export default function ResourcePlanPage() {
               <div className="ges-card p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-xs font-mono text-blue-600 font-semibold">{selectedProj?.projectNumber}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-mono text-blue-600 font-semibold">{selectedProj?.projectNumber}</p>
+                      {plans.length > 0 && (
+                        <PlanStatusBadge status={plans[0].planStatus} />
+                      )}
+                    </div>
                     <h2 className="text-lg font-bold text-gray-900 mt-0.5">{selectedProj?.projectName}</h2>
                   </div>
-                  <div className="flex gap-4 flex-shrink-0 text-center">
+                  <div className="flex gap-4 flex-shrink-0 text-center items-center">
+                    {rows.length > 0 && plans[0]?.planStatus !== "approved" && (
+                      <button
+                        onClick={submitPlan}
+                        disabled={saving === "submit" || rows.length === 0}
+                        className="ges-btn-primary text-xs px-3 py-1.5"
+                      >
+                        {saving === "submit" ? "Submitting…" : plans[0]?.planStatus === "submitted" ? "✓ ส่งแล้ว" : "📤 Submit Plan"}
+                      </button>
+                    )}
                     <div><p className="text-xl font-bold text-blue-900">{totalPlanned}h</p><p className="text-xs text-gray-500">วางแผน</p></div>
                     <div className="w-px bg-gray-200" />
                     <div><p className={`text-xl font-bold ${totalActual >= totalPlanned && totalPlanned > 0 ? "text-green-600" : "text-amber-600"}`}>{totalActual}h</p><p className="text-xs text-gray-500">จริง</p></div>
@@ -311,4 +337,14 @@ export default function ResourcePlanPage() {
       </div>
     </div>
   );
+}
+
+function PlanStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    draft:     { label: "Draft",     cls: "bg-gray-100 text-gray-600" },
+    submitted: { label: "📤 รอ Approve", cls: "bg-amber-100 text-amber-800" },
+    approved:  { label: "✓ Approved by PD", cls: "bg-green-100 text-green-800" },
+  };
+  const s = map[status] ?? map.draft;
+  return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
 }

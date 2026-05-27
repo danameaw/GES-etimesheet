@@ -2,25 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, endOfWeek } from "date-fns";
+import { startOfWeek, addDays } from "date-fns";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const role = (session.user as any).role;
-  if (role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const weekParam = searchParams.get("week");
 
-  let weekStart: Date;
-  if (weekParam) {
-    weekStart = startOfWeek(new Date(weekParam), { weekStartsOn: 1 });
-  } else {
-    weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  }
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+  // weekParam sent as "yyyy-MM-dd" to avoid timezone shifts
+  const weekStart = weekParam
+    ? new Date(weekParam + "T00:00:00.000Z")
+    : startOfWeek(new Date(), { weekStartsOn: 1 });
+  const weekEnd = addDays(weekStart, 6);
 
   const [allEmployees, timesheets] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),

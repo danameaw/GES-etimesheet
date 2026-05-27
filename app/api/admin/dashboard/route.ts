@@ -7,7 +7,7 @@ import { startOfWeek, endOfWeek, subWeeks, format } from "date-fns";
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd"].includes((session.user as any).role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Fetch all timesheet entries with relations
   const entries = await prisma.timesheetEntry.findMany({

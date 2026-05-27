@@ -86,6 +86,7 @@ model ResourcePlan {
   employeeId  String
   weekStart   DateTime
   plannedHrs  Float    @default(0)
+  planStatus  String   @default("draft")  // draft | submitted | approved
   createdBy   String   // employee ID of PM/PD who created this
   updatedAt   DateTime @updatedAt
 

@@ -24,12 +24,18 @@ export default function Navbar() {
   const isAdmin = role === "admin";
   const isPMorPD = ["pm", "pd", "admin"].includes(role);
 
+  const isPM = role === "pm";
+  const isPD = role === "pd";
+
   const navLinks = [
-    { href: "/timesheet",     label: "Timesheet",       icon: "📋", show: true },
-    { href: "/resource-plan", label: "Resource Plan",   icon: "📌", show: isPMorPD },
-    { href: "/admin",         label: "Admin View",      icon: "👥", show: isAdmin },
-    { href: "/employees",     label: "Employees",       icon: "👤", show: isAdmin },
-    { href: "/dashboard",     label: "Dashboard",       icon: "📊", show: isAdmin },
+    { href: "/timesheet",              label: "Timesheet",        icon: "📋", show: true },
+    { href: "/resource-plan",          label: "Resource Plan",    icon: "📌", show: isPM || isAdmin },
+    { href: "/admin",                  label: "Approval",         icon: "✅", show: isPD },
+    { href: "/admin/resource-approval",label: "Approve Plan",     icon: "📝", show: isPD },
+    { href: "/admin",                  label: "Admin View",       icon: "👥", show: isAdmin },
+    { href: "/employees",              label: "Employees",        icon: "👤", show: isAdmin },
+    { href: "/admin/resource-approval",label: "Resource Approval",icon: "📝", show: isAdmin },
+    { href: "/dashboard",              label: "Dashboard",        icon: "📊", show: isAdmin || isPD },
   ];
 
   return (
@@ -50,7 +56,10 @@ export default function Navbar() {
           {/* Nav Links */}
           <div className="flex items-center gap-0.5">
             {navLinks.filter((l) => l.show).map((link) => {
-              const active = pathname.startsWith(link.href);
+              // Exact match for /admin to avoid highlighting when on /admin/edit etc.
+            const active = link.href === "/admin"
+              ? pathname === "/admin"
+              : pathname.startsWith(link.href);
               return (
                 <Link
                   key={link.href}

@@ -8,19 +8,18 @@ import * as XLSX from "xlsx";
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd"].includes((session.user as any).role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") || "weekly";
   const weekParam = searchParams.get("week");
 
-  let weekStart: Date;
-  if (weekParam) {
-    weekStart = startOfWeek(new Date(weekParam), { weekStartsOn: 1 });
-  } else {
-    weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  }
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+  // weekParam sent as "yyyy-MM-dd" to avoid timezone shifts
+  const weekStart = weekParam
+    ? new Date(weekParam + "T00:00:00.000Z")
+    : startOfWeek(new Date(), { weekStartsOn: 1 });
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
 
   const wb = XLSX.utils.book_new();
   const weekLabel = `${format(weekStart, "dd-MMM")} to ${format(weekEnd, "dd-MMM-yyyy")}`;
