@@ -170,8 +170,9 @@ export default function TimesheetPage() {
     setSaving(false);
   }
 
-  const canEdit = timesheetStatus !== "submitted";
   const isSubmitted = timesheetStatus === "submitted";
+  const isApproved = timesheetStatus === "approved";
+  const canEdit = !isSubmitted && !isApproved;
 
   return (
     <div>
@@ -211,9 +212,11 @@ export default function TimesheetPage() {
         {/* Status badge */}
         <div className="flex items-center gap-2">
           <span className={`text-sm font-medium px-3 py-1 rounded-full ${
-            isSubmitted ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
+            isApproved ? "bg-blue-100 text-blue-800" :
+            isSubmitted ? "bg-green-100 text-green-800" :
+            "bg-yellow-100 text-yellow-800"
           }`}>
-            {isSubmitted ? "✓ Submitted" : "Draft"}
+            {isApproved ? "✓ Approved" : isSubmitted ? "✓ Submitted" : "Draft"}
           </span>
         </div>
       </div>
@@ -226,6 +229,22 @@ export default function TimesheetPage() {
           "bg-yellow-50 text-yellow-800 border border-yellow-200"
         }`}>
           {message.text}
+        </div>
+      )}
+
+      {/* Read-only notice */}
+      {(isSubmitted || isApproved) && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 ${
+          isApproved
+            ? "bg-blue-50 text-blue-800 border border-blue-200"
+            : "bg-green-50 text-green-800 border border-green-200"
+        }`}>
+          <span>🔒</span>
+          <span>
+            {isApproved
+              ? "Timesheet ได้รับการ Approve แล้ว — ไม่สามารถแก้ไขได้"
+              : "Timesheet ถูกส่งแล้ว — ไม่สามารถแก้ไขได้ กรุณาติดต่อ PD หรือ Admin เพื่อ Unlock"}
+          </span>
         </div>
       )}
 

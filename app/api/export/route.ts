@@ -5,6 +5,12 @@ import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
 import * as XLSX from "xlsx";
 
+// ±13h tolerance window for backward-compat with Thailand UTC+7 stored dates
+function weekRange(weekStart: Date) {
+  const MS_13H = 13 * 60 * 60 * 1000;
+  return { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) };
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -18,16 +24,16 @@ export async function GET(req: NextRequest) {
   const weekStart = weekParam
     ? new Date(weekParam + "T00:00:00.000Z")
     : startOfWeek(new Date(), { weekStartsOn: 1 });
-  const weekEnd = new Date(weekStart);
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
 
   const wb = XLSX.utils.book_new();
-  const weekLabel = `${format(weekStart, "dd-MMM")} to ${format(weekEnd, "dd-MMM-yyyy")}`;
+  const weekLabel = `${format(weekStart, "dd-MMM")} to ${format(new Date(weekStart.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
+
+  // Only export submitted or approved timesheets
+  const DONE_STATUSES = ["submitted", "approved"];
 
   if (type === "weekly") {
-    // Sheet 1: Timesheet Weekly Report
     const timesheets = await prisma.timesheet.findMany({
-      where: { weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } },
+      where: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } },
       include: {
         employee: true,
         entries: { include: { project: true, taskCode: true } },
@@ -63,9 +69,8 @@ export async function GET(req: NextRequest) {
     XLSX.utils.book_append_sheet(wb, ws, "Weekly Report");
 
   } else if (type === "project") {
-    // Sheet: By Project Summary
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } } },
+      where: { timesheet: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } } },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -94,11 +99,10 @@ export async function GET(req: NextRequest) {
     XLSX.utils.book_append_sheet(wb, ws, "By Project");
 
   } else if (type === "utilization") {
-    // Sheet: Utilization by Employee
     const [allEmployees, timesheets] = await Promise.all([
       prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
       prisma.timesheet.findMany({
-        where: { weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } },
+        where: { weekStart: weekRange(weekStart) },
         include: { employee: true, entries: true },
       }),
     ]);
@@ -131,13 +135,14 @@ export async function GET(req: NextRequest) {
     XLSX.utils.book_append_sheet(wb, ws, "Utilization");
 
   } else if (type === "missing") {
-    // Sheet: Missing Timesheet Report
     const [allEmployees, timesheets] = await Promise.all([
       prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
-      prisma.timesheet.findMany({ where: { weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } } }),
+      prisma.timesheet.findMany({ where: { weekStart: weekRange(weekStart) } }),
     ]);
 
-    const submittedIds = new Set(timesheets.filter((t) => t.status === "submitted").map((t) => t.employeeId));
+    const submittedIds = new Set(
+      timesheets.filter((t) => DONE_STATUSES.includes(t.status)).map((t) => t.employeeId)
+    );
 
     const rows: any[][] = [
       [`GES E-Timesheet - Missing Timesheet Report: ${weekLabel}`],

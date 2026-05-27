@@ -26,14 +26,13 @@ export default function Navbar() {
   const isPD = role === "pd";
 
   const navLinks = [
-    { href: "/timesheet",              label: "Timesheet",        icon: "📋", show: true },
-    { href: "/resource-plan",          label: "Resource Plan",    icon: "📌", show: isPM || isAdmin },
-    { href: "/admin",                  label: "Approval",         icon: "✅", show: isPD },
-    { href: "/admin/resource-approval",label: "Approve Plan",     icon: "📝", show: isPD },
-    { href: "/admin",                  label: "Admin View",       icon: "👥", show: isAdmin },
-    { href: "/employees",              label: "Employees",        icon: "👤", show: isAdmin },
-    { href: "/admin/resource-approval",label: "Resource Approval",icon: "📝", show: isAdmin },
-    { href: "/dashboard",              label: "Dashboard",        icon: "📊", show: isAdmin || isPD },
+    { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
+    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM || isAdmin },
+    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
+    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },
+    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
+    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
+    { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isAdmin || isPD },
   ];
 
   return (

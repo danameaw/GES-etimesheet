@@ -242,8 +242,8 @@ export default function AdminPage() {
                       </td>
                       <td className="text-center">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
-                          {/* PD: Approve button for submitted timesheets */}
-                          {emp.status === "submitted" && emp.timesheetId && (
+                          {/* PD ONLY: Approve button */}
+                          {role === "pd" && emp.status === "submitted" && emp.timesheetId && (
                             <button
                               onClick={() => handleApprove(emp.timesheetId!)}
                               disabled={acting === emp.timesheetId}
@@ -252,7 +252,7 @@ export default function AdminPage() {
                               ✓ อนุมัติ
                             </button>
                           )}
-                          {/* Unlock approved/submitted */}
+                          {/* PD + Admin: Unlock */}
                           {["submitted", "approved"].includes(emp.status) && emp.timesheetId && (
                             <button
                               onClick={() => handleUnlock(emp.timesheetId!)}
@@ -262,7 +262,7 @@ export default function AdminPage() {
                               🔓 ปลดล็อค
                             </button>
                           )}
-                          {/* Admin: Edit timesheet button */}
+                          {/* Admin ONLY: Edit timesheet */}
                           {isAdmin && (
                             <Link
                               href={`/admin/edit?empId=${emp.id}&week=${format(currentWeek, "yyyy-MM-dd")}`}

@@ -81,6 +81,13 @@ export async function POST(req: NextRequest) {
     where: { employeeId: employeeDbId, weekStart: weekRange(wsDate) },
   });
 
+  // Block editing submitted or approved timesheets (must be unlocked by PD/Admin first)
+  if (timesheet && ["submitted", "approved"].includes(timesheet.status)) {
+    return NextResponse.json({
+      error: "Timesheet is locked. Contact PD or Admin to unlock.",
+    }, { status: 403 });
+  }
+
   const status = action === "submit" ? "submitted" : "draft";
 
   if (timesheet) {

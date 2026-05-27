@@ -138,8 +138,8 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (action === "approve" || action === "reject") {
-    // PD approves or rejects
-    if (!["pd", "admin"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // ONLY PD can approve/reject resource plans
+    if (role !== "pd") return NextResponse.json({ error: "Only PD can approve resource plans" }, { status: 403 });
     const newStatus = action === "approve" ? "approved" : "draft";
     await prisma.resourcePlan.updateMany({
       where: { projectId, weekStart: wsDate },

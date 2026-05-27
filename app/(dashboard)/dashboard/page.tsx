@@ -20,6 +20,7 @@ interface DashboardData {
   deptHours: { department: string; hours: number }[];
   topEmployees: { name: string; hours: number }[];
   weeklyTrend: { week: string; utilization: number }[];
+  planVsActual: { projectNumber: string; projectName: string; planned: number; actual: number }[];
 }
 
 const COLORS = [
@@ -244,6 +245,55 @@ export default function DashboardPage() {
               />
             </div>
           </div>
+
+          {/* Bar: Plan vs Actual hours by Project */}
+          {data.planVsActual && data.planVsActual.length > 0 && (
+            <div className="ges-card p-5 lg:col-span-2">
+              <h2 className="font-semibold text-gray-800 mb-1">Plan vs Actual Hours by Project</h2>
+              <p className="text-xs text-gray-400 mb-4">เปรียบเทียบชั่วโมงที่วางแผน (Resource Plan) กับชั่วโมงที่ลงจริง (Submitted)</p>
+              <div style={{ height: 300 }}>
+                <Bar
+                  data={{
+                    labels: data.planVsActual.map((p) => p.projectNumber),
+                    datasets: [
+                      {
+                        label: "แผน (Planned)",
+                        data: data.planVsActual.map((p) => p.planned),
+                        backgroundColor: "rgba(37,99,235,0.7)",
+                        borderRadius: 4,
+                      },
+                      {
+                        label: "จริง (Actual)",
+                        data: data.planVsActual.map((p) => p.actual),
+                        backgroundColor: "rgba(5,150,105,0.7)",
+                        borderRadius: 4,
+                      },
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: true, position: "top" as const },
+                      tooltip: {
+                        callbacks: {
+                          title: (items) => {
+                            const idx = items[0].dataIndex;
+                            return data.planVsActual[idx].projectName;
+                          },
+                          label: (item) => `${item.dataset.label}: ${item.raw}h`,
+                        },
+                      },
+                    },
+                    scales: {
+                      y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
+                      x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                    },
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
