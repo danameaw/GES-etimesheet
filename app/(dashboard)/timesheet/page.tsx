@@ -57,7 +57,7 @@ export default function TimesheetPage() {
   const [taskCodes, setTaskCodes] = useState<TaskCode[]>([]);
   const [rows, setRows] = useState<TimesheetRow[]>([newRow()]);
   const [timesheetStatus, setTimesheetStatus] = useState<string>("draft");
-  const [timesheetId, setTimesheetId] = useState<string | null>(null);
+  const [_timesheetId, setTimesheetId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
 
