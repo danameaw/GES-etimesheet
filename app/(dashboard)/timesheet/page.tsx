@@ -57,7 +57,6 @@ export default function TimesheetPage() {
   const [taskCodes, setTaskCodes] = useState<TaskCode[]>([]);
   const [rows, setRows] = useState<TimesheetRow[]>([newRow()]);
   const [timesheetStatus, setTimesheetStatus] = useState<string>("draft");
-  const [_timesheetId, setTimesheetId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
 
@@ -87,7 +86,7 @@ export default function TimesheetPage() {
     const res = await fetch(`/api/timesheets?week=${format(currentWeek, "yyyy-MM-dd")}`);
     const data = await res.json();
     if (data.timesheet) {
-      setTimesheetId(data.timesheet.id);
+
       setTimesheetStatus(data.timesheet.status);
       if (data.timesheet.entries.length > 0) {
         setRows(data.timesheet.entries.map((e: any) => ({
@@ -101,7 +100,6 @@ export default function TimesheetPage() {
         setRows([newRow()]);
       }
     } else {
-      setTimesheetId(null);
       setTimesheetStatus("draft");
       setRows([newRow()]);
     }
@@ -156,7 +154,6 @@ export default function TimesheetPage() {
       const data = await res.json();
       if (res.ok) {
         setTimesheetStatus(data.status);
-        setTimesheetId(data.timesheetId);
         setMessage({
           type: "success",
           text: action === "submit" ? "Timesheet submitted successfully!" : "Draft saved.",
