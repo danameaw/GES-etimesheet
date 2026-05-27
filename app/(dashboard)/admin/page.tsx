@@ -38,6 +38,7 @@ export default function AdminPage() {
   const [acting, setActing] = useState<string | null>(null);
 
   const role = (session?.user as any)?.role;
+  const isAdmin = role === "admin";
   const canApprove = ["admin", "pd"].includes(role);
 
   useEffect(() => {

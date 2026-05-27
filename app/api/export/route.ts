@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, endOfWeek, format } from "date-fns";
+import { startOfWeek, format } from "date-fns";
 import * as XLSX from "xlsx";
 
 export async function GET(req: NextRequest) {

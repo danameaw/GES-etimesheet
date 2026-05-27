@@ -22,8 +22,6 @@ export default function Navbar() {
   const pathname = usePathname();
   const role = (session?.user as any)?.role ?? "employee";
   const isAdmin = role === "admin";
-  const isPMorPD = ["pm", "pd", "admin"].includes(role);
-
   const isPM = role === "pm";
   const isPD = role === "pd";
 
