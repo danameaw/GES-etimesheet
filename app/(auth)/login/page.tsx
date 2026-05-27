@@ -112,13 +112,8 @@ export default function LoginPage() {
 
           <div className="mt-6 pt-5 border-t border-gray-100">
             <p className="text-xs text-gray-400 text-center">
-              Use your Employee ID and registered Full Name
+              กรุณากรอก รหัสพนักงาน และ ชื่อ-นามสกุล ที่ลงทะเบียนไว้
             </p>
-            <div className="mt-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-700 space-y-1">
-              <p className="font-semibold">Demo accounts:</p>
-              <p>Admin: <span className="font-mono">GES001</span> / <span className="font-mono">Somchai Prasertphon</span></p>
-              <p>Employee: <span className="font-mono">GES003</span> / <span className="font-mono">Nattapong Rattanakul</span></p>
-            </div>
           </div>
         </div>
 
