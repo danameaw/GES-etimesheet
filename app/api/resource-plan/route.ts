@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, endOfWeek } from "date-fns";
+import { startOfWeek, endOfWeek, addDays } from "date-fns";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const role = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "pd", "admin"].includes(role)) {
+  if (!["pm", "admin"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -19,10 +19,11 @@ export async function GET(req: NextRequest) {
   const weekParam = searchParams.get("week");
   const projectId = searchParams.get("projectId");
 
+  // weekParam is sent as "yyyy-MM-dd" (date-only) to avoid timezone shift
   const weekStart = weekParam
-    ? startOfWeek(new Date(weekParam), { weekStartsOn: 1 })
+    ? new Date(weekParam + "T00:00:00.000Z")
     : startOfWeek(new Date(), { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+  const weekEnd = addDays(weekStart, 6);
 
   // Determine which projects this user can see
   const projectWhere = role === "admin" ? {} : { managerId: empDbId };
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
   const role = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "pd", "admin"].includes(role)) {
+  if (!["pm", "admin"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -89,7 +90,10 @@ export async function POST(req: NextRequest) {
     if (!project) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }
 
-  const wsDate = new Date(weekStart);
+  // weekStart is sent as "yyyy-MM-dd" from frontend — parse as UTC midnight
+  const wsDate = weekStart.length === 10
+    ? new Date(weekStart + "T00:00:00.000Z")
+    : new Date(weekStart);
 
   const plan = await prisma.resourcePlan.upsert({
     where: { projectId_employeeId_weekStart: { projectId, employeeId, weekStart: wsDate } },

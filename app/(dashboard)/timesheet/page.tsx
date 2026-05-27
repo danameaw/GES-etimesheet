@@ -60,7 +60,6 @@ export default function TimesheetPage() {
   const [timesheetId, setTimesheetId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
-  const [isLocked, setIsLocked] = useState(false);
 
   const weekEnd = new Date(currentWeek);
   weekEnd.setDate(weekEnd.getDate() + 6);
@@ -72,17 +71,6 @@ export default function TimesheetPage() {
     d.setDate(d.getDate() + i);
     return d;
   });
-
-  // Check lock status
-  useEffect(() => {
-    const lockTime = new Date(currentWeek);
-    lockTime.setDate(lockTime.getDate() + 7); // next week Monday
-    const dayOfWeek = lockTime.getDay();
-    const daysToMon = dayOfWeek === 0 ? 1 : (1 - dayOfWeek + 7) % 7 || 7;
-    lockTime.setDate(lockTime.getDate() + daysToMon - 7);
-    lockTime.setHours(9, 0, 0, 0);
-    setIsLocked(new Date() > lockTime);
-  }, [currentWeek]);
 
   // Fetch projects and task codes
   useEffect(() => {
@@ -182,7 +170,7 @@ export default function TimesheetPage() {
     setSaving(false);
   }
 
-  const canEdit = !isLocked || timesheetStatus !== "submitted";
+  const canEdit = timesheetStatus !== "submitted";
   const isSubmitted = timesheetStatus === "submitted";
 
   return (
@@ -222,11 +210,6 @@ export default function TimesheetPage() {
 
         {/* Status badge */}
         <div className="flex items-center gap-2">
-          {isLocked && (
-            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
-              🔒 Locked
-            </span>
-          )}
           <span className={`text-sm font-medium px-3 py-1 rounded-full ${
             isSubmitted ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
           }`}>
@@ -399,9 +382,6 @@ export default function TimesheetPage() {
           </div>
         )}
 
-        {isLocked && isSubmitted && (
-          <p className="text-xs text-gray-500">Timesheet locked. Contact admin to unlock.</p>
-        )}
       </div>
     </div>
   );
