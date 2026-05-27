@@ -2,7 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, endOfWeek } from "date-fns";
+import { startOfWeek, addDays } from "date-fns";
+
+// Parse a week param that may be "yyyy-MM-dd" (new) or ISO string (legacy)
+// Returns UTC midnight for the date
+function parseWeekStart(param: string): Date {
+  if (param.length === 10) {
+    return new Date(param + "T00:00:00.000Z");
+  }
+  // Legacy ISO string: compute the Monday of that week
+  return startOfWeek(new Date(param), { weekStartsOn: 1 });
+}
+
+// For backward-compat: old timesheets were saved with Thailand UTC+7 offset
+// (Mon midnight Thai = Sun 17:00 UTC). Use ±13h window to catch both old and new.
+function weekRange(weekStart: Date) {
+  const MS_12H = 13 * 60 * 60 * 1000;
+  return {
+    gte: new Date(weekStart.getTime() - MS_12H),
+    lt:  new Date(weekStart.getTime() + MS_12H),
+  };
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -13,18 +33,12 @@ export async function GET(req: NextRequest) {
   const employeeDbId = (session.user as any).id;
   const role = (session.user as any).role;
 
-  let weekStart: Date;
-  if (weekParam) {
-    weekStart = startOfWeek(new Date(weekParam), { weekStartsOn: 1 });
-  } else {
-    weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  }
-  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+  const weekStart = weekParam
+    ? parseWeekStart(weekParam)
+    : startOfWeek(new Date(), { weekStartsOn: 1 });
 
-  // Employees can only see their own timesheets
   const whereClause: any = {
-    weekStart: { gte: weekStart },
-    weekEnd: { lte: weekEnd },
+    weekStart: weekRange(weekStart),
   };
   if (role !== "admin") {
     whereClause.employeeId = employeeDbId;
@@ -37,16 +51,13 @@ export async function GET(req: NextRequest) {
     where: whereClause,
     include: {
       entries: {
-        include: {
-          project: true,
-          taskCode: true,
-        },
+        include: { project: true, taskCode: true },
       },
       employee: true,
     },
   });
 
-  return NextResponse.json({ timesheet, weekStart, weekEnd });
+  return NextResponse.json({ timesheet, weekStart, weekEnd: addDays(weekStart, 6) });
 }
 
 export async function POST(req: NextRequest) {
@@ -57,38 +68,29 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { weekStart, weekEnd, entries, action } = body;
 
-  const wsDate = new Date(weekStart);
-  const weDate = new Date(weekEnd);
+  // Parse weekStart/weekEnd — support both "yyyy-MM-dd" and legacy ISO
+  const wsDate = weekStart.length === 10
+    ? new Date(weekStart + "T00:00:00.000Z")
+    : new Date(weekStart);
+  const weDate = weekEnd.length === 10
+    ? new Date(weekEnd + "T00:00:00.000Z")
+    : new Date(weekEnd);
 
-  // Check cut-off: lock after following Monday 09:00
-  const lockTime = new Date(wsDate);
-  lockTime.setDate(lockTime.getDate() + 7);
-  const dayOfWeek = lockTime.getDay();
-  const daysToMonday = (1 - dayOfWeek + 7) % 7 || 7;
-  lockTime.setDate(lockTime.getDate() + daysToMonday - 7);
-  lockTime.setHours(9, 0, 0, 0);
-
-  const now = new Date();
-
-  // Find or create timesheet
+  // Find existing timesheet (use tolerance window for old data)
   let timesheet = await prisma.timesheet.findFirst({
-    where: { employeeId: employeeDbId, weekStart: wsDate },
+    where: { employeeId: employeeDbId, weekStart: weekRange(wsDate) },
   });
-
-  if (timesheet?.status === "submitted" && action !== "unlock") {
-    if (now > lockTime) {
-      return NextResponse.json({ error: "Submission is locked after Monday 09:00" }, { status: 403 });
-    }
-  }
 
   const status = action === "submit" ? "submitted" : "draft";
 
   if (timesheet) {
-    // Delete existing entries and update
     await prisma.timesheetEntry.deleteMany({ where: { timesheetId: timesheet.id } });
     timesheet = await prisma.timesheet.update({
       where: { id: timesheet.id },
       data: {
+        // Normalize weekStart to UTC midnight on update
+        weekStart: wsDate,
+        weekEnd: weDate,
         status,
         submittedAt: action === "submit" ? new Date() : null,
         updatedAt: new Date(),
@@ -126,7 +128,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Audit log
   await prisma.auditLog.create({
     data: {
       employeeId: employeeDbId,

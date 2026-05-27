@@ -25,8 +25,9 @@ export async function GET(req: NextRequest) {
   });
   if (!employee) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
 
+  const MS_13H = 13 * 60 * 60 * 1000;
   const timesheet = await prisma.timesheet.findFirst({
-    where: { employeeId: empId, weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } },
+    where: { employeeId: empId, weekStart: { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) } },
     include: { entries: true },
   });
 
@@ -66,8 +67,9 @@ export async function POST(req: NextRequest) {
   const newStatus = action === "submit" ? "submitted" : "draft";
 
   // Find or create timesheet
+  const MS_13H = 13 * 60 * 60 * 1000;
   let timesheet = await prisma.timesheet.findFirst({
-    where: { employeeId: empId, weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } },
+    where: { employeeId: empId, weekStart: { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) } },
   });
 
   if (timesheet) {

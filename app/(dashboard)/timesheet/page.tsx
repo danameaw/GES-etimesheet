@@ -84,7 +84,7 @@ export default function TimesheetPage() {
 
   // Fetch timesheet for current week
   const loadTimesheet = useCallback(async () => {
-    const res = await fetch(`/api/timesheets?week=${currentWeek.toISOString()}`);
+    const res = await fetch(`/api/timesheets?week=${format(currentWeek, "yyyy-MM-dd")}`);
     const data = await res.json();
     if (data.timesheet) {
       setTimesheetId(data.timesheet.id);
@@ -147,8 +147,8 @@ export default function TimesheetPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          weekStart: currentWeek.toISOString(),
-          weekEnd: weekEnd.toISOString(),
+          weekStart: format(currentWeek, "yyyy-MM-dd"),
+          weekEnd: format(weekEnd, "yyyy-MM-dd"),
           entries: validRows,
           action: action === "submit" ? "submit" : "save",
         }),

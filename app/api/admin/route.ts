@@ -20,10 +20,15 @@ export async function GET(req: NextRequest) {
     : startOfWeek(new Date(), { weekStartsOn: 1 });
   const weekEnd = addDays(weekStart, 6);
 
+  // ±13h tolerance: old timesheets stored with Thailand UTC+7 offset (Mon 00:00 Thai = Sun 17:00 UTC)
+  const MS_13H = 13 * 60 * 60 * 1000;
+  const weekStartMin = new Date(weekStart.getTime() - MS_13H);
+  const weekStartMax = new Date(weekStart.getTime() + MS_13H);
+
   const [allEmployees, timesheets] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
-      where: { weekStart: { gte: weekStart }, weekEnd: { lte: weekEnd } },
+      where: { weekStart: { gte: weekStartMin, lt: weekStartMax } },
       include: { employee: true, entries: true },
     }),
   ]);

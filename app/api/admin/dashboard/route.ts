@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, endOfWeek, subWeeks, format } from "date-fns";
+import { startOfWeek, subWeeks, format } from "date-fns";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -73,12 +73,16 @@ export async function GET(req: NextRequest) {
     prisma.employee.count({ where: { isActive: true } }),
   ]);
 
+  const MS_13H = 13 * 60 * 60 * 1000;
+
   for (let i = 5; i >= 0; i--) {
     const wStart = startOfWeek(subWeeks(now, i), { weekStartsOn: 1 });
-    const wEnd = endOfWeek(wStart, { weekStartsOn: 1 });
 
     const weekTimesheets = await prisma.timesheet.findMany({
-      where: { weekStart: { gte: wStart }, weekEnd: { lte: wEnd }, status: "submitted" },
+      where: {
+        weekStart: { gte: new Date(wStart.getTime() - MS_13H), lt: new Date(wStart.getTime() + MS_13H) },
+        status: { in: ["submitted", "approved"] },
+      },
       include: { entries: true },
     });
 
