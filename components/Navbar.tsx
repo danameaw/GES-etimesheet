@@ -27,12 +27,12 @@ export default function Navbar() {
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
-    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM || isAdmin },
-    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
-    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },
-    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
-    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
-    { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isAdmin || isPD },
+    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM },          // PM only
+    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },           // PD only
+    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },          // PD only
+    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },        // Admin only
+    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },        // Admin only
+    { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isPD },           // PD only
   ];
 
   return (

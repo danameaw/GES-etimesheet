@@ -35,8 +35,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const role = (session?.user as any)?.role;
-  const isAdmin = role === "admin";
-  const canView = ["admin", "pd"].includes(role);
+  // Dashboard is PD-only (admin uses Admin View instead)
+  const canView = role === "pd";
   useEffect(() => {
     if (session && !canView) router.push("/timesheet");
   }, [session, canView, router]);

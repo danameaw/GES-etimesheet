@@ -13,17 +13,32 @@ function weekRange(wStart: Date) {
 export async function GET(_req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["admin", "pd"].includes((session.user as any).role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Dashboard is PD-only
+  if ((session.user as any).role !== "pd") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Only count submitted + approved timesheets
-  const entries = await prisma.timesheetEntry.findMany({
-    where: { timesheet: { status: { in: ["submitted", "approved"] } } },
-    include: {
-      project: true,
-      taskCode: true,
-      timesheet: { include: { employee: true } },
-    },
+  // Dedup: if same employee submitted same week twice (timezone bug legacy),
+  // keep only the one with most hours to avoid inflated totals.
+  const allTimesheets = await prisma.timesheet.findMany({
+    where: { status: { in: ["submitted", "approved"] } },
+    include: { entries: { include: { project: true, taskCode: true } }, employee: true },
+    orderBy: { updatedAt: "desc" },
   });
+
+  // Deduplicate: keep one timesheet per (employeeId + weekStart-rounded)
+  const seen = new Set<string>();
+  const dedupedTimesheets = allTimesheets.filter((ts) => {
+    // Round to nearest day (ignore time, handles both UTC midnight and Thai UTC+7 offset)
+    const dayKey = new Date(Math.round(ts.weekStart.getTime() / 86400000) * 86400000).toISOString().slice(0, 10);
+    const key = `${ts.employeeId}-${dayKey}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const entries = dedupedTimesheets.flatMap((ts) =>
+    ts.entries.map((e) => ({ ...e, timesheet: ts as any }))
+  );
 
   // Hours by project (top 10)
   const projectHoursMap = new Map<string, { name: string; hours: number }>();

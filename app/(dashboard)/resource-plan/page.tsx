@@ -26,8 +26,8 @@ export default function ResourcePlanPage() {
   const [addHrs, setAddHrs] = useState<number>(40);
 
   const role = (session?.user as any)?.role;
-  // Resource Plan: PM + Admin only (NOT PD)
-  const canAccess = ["pm", "admin"].includes(role);
+  // Resource Plan: PM only (Admin uses Admin View; PD uses Approve Plan)
+  const canAccess = role === "pm";
 
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
