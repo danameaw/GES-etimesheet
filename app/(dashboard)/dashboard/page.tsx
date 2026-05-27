@@ -7,10 +7,11 @@ import {
   Chart as ChartJS,
   CategoryScale, LinearScale, BarElement, ArcElement,
   PointElement, LineElement, Title, Tooltip, Legend,
+  BarController, LineController,
 } from "chart.js";
 import { Bar, Doughnut, Chart } from "react-chartjs-2";
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend, BarController, LineController);
 
 interface DashboardData {
   projectHours:     { projectNumber: string; projectName: string; projectId: string; hours: number }[];
