@@ -24,16 +24,19 @@ model Employee {
 }
 
 model Project {
-  id            String   @id @default(cuid())
-  projectNumber String   @unique
+  id            String    @id @default(cuid())
+  projectNumber String    @unique
   projectName   String
-  projectType   String   @default("project")
-  isActive      Boolean  @default(true)
+  projectType   String    @default("project")
+  isActive      Boolean   @default(true)
   managerId     String?
+  startDate     DateTime?
+  endDate       DateTime?
 
-  manager       Employee?      @relation("ProjectManager", fields: [managerId], references: [id])
-  entries       TimesheetEntry[]
-  resourcePlans ResourcePlan[]
+  manager              Employee?             @relation("ProjectManager", fields: [managerId], references: [id])
+  entries              TimesheetEntry[]
+  resourcePlans        ResourcePlan[]
+  resourcePlansMonthly ResourcePlanMonthly[]
 }
 
 model TaskCode {
@@ -94,6 +97,31 @@ model ResourcePlan {
   employee Employee @relation(fields: [employeeId], references: [id])
 
   @@unique([projectId, employeeId, weekStart])
+}
+
+model Holiday {
+  id        String   @id @default(cuid())
+  date      DateTime
+  name      String
+  type      String   @default("public_holiday") // public_holiday | company_leave
+  createdAt DateTime @default(now())
+}
+
+// Long-term monthly resource plan by department (replaces weekly per-person plan for new workflow)
+model ResourcePlanMonthly {
+  id          String   @id @default(cuid())
+  projectId   String
+  department  String
+  year        Int
+  month       Int      // 1–12
+  plannedHrs  Float    @default(0)
+  planStatus  String   @default("draft") // draft | submitted | approved
+  createdBy   String
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, department, year, month])
 }
 
 model AuditLog {

@@ -60,18 +60,38 @@ export async function GET(req: NextRequest) {
     ts.entries.map((e) => ({ ...e, timesheet: ts as any }))
   );
 
-  // Hours by project (top 10)
-  const projectHoursMap = new Map<string, { name: string; hours: number }>();
+  // Hours by project × department (stacked bar) — top 10 projects
+  const projDeptMap = new Map<string, { name: string; id: string; total: number; byDept: Record<string, number> }>();
   for (const e of entries) {
-    const key = e.project.projectNumber;
-    const existing = projectHoursMap.get(key);
-    if (existing) existing.hours += e.totalHrs;
-    else projectHoursMap.set(key, { name: e.project.projectName, hours: e.totalHrs });
+    const key  = e.project.projectNumber;
+    const dept = e.timesheet.employee.department;
+    if (!projDeptMap.has(key)) {
+      projDeptMap.set(key, { name: e.project.projectName, id: e.projectId, total: 0, byDept: {} });
+    }
+    const rec = projDeptMap.get(key)!;
+    rec.total += e.totalHrs;
+    rec.byDept[dept] = (rec.byDept[dept] || 0) + e.totalHrs;
   }
-  const projectHours = Array.from(projectHoursMap.entries())
-    .map(([num, v]) => ({ projectNumber: num, projectName: v.name, hours: v.hours }))
-    .sort((a, b) => b.hours - a.hours)
-    .slice(0, 10);
+  const top10ProjKeys = Array.from(projDeptMap.entries())
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 10)
+    .map(([k]) => k);
+
+  const projectHours = top10ProjKeys.map((num) => {
+    const v = projDeptMap.get(num)!;
+    return { projectNumber: num, projectName: v.name, projectId: v.id, hours: v.total };
+  });
+
+  // All unique departments in data (for stacked legend)
+  const allDepts = Array.from(
+    new Set(entries.map((e) => e.timesheet.employee.department))
+  ).sort();
+
+  // Stacked data: per project, hours by each dept
+  const projectDeptHours = top10ProjKeys.map((num) => {
+    const v = projDeptMap.get(num)!;
+    return { projectNumber: num, projectName: v.name, projectId: v.id, byDept: v.byDept };
+  });
 
   // Hours by task category
   const categoryMap = new Map<string, number>();
@@ -83,7 +103,7 @@ export async function GET(req: NextRequest) {
     .map(([category, hours]) => ({ category, hours }))
     .sort((a, b) => b.hours - a.hours);
 
-  // Workload by department
+  // Workload by department (kept for backward compat)
   const deptMap = new Map<string, number>();
   for (const e of entries) {
     const dept = e.timesheet.employee.department;
@@ -192,6 +212,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     projectHours,
+    projectDeptHours,
+    allDepts,
     categoryHours,
     deptHours,
     topEmployees,

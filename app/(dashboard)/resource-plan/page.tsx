@@ -1,138 +1,115 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { format, startOfWeek, addWeeks, subWeeks } from "date-fns";
 
-interface Employee { id: string; employeeId: string; name: string; department: string; position: string; }
-interface Project { id: string; projectNumber: string; projectName: string; manager: { id: string; name: string; employeeId: string } | null; }
-interface ResourcePlan { id: string; projectId: string; employeeId: string; weekStart: string; plannedHrs: number; planStatus: string; employee: Employee; }
-interface ActualEntry { id: string; projectId: string; totalHrs: number; timesheet: { employee: Employee & { department: string } }; }
-interface ResourceRow { employee: Employee; planId?: string; plannedHrs: number; actualHrs: number; }
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTH_NAMES_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+interface Project {
+  id: string; projectNumber: string; projectName: string;
+  startDate: string | null; endDate: string | null;
+  manager: { id: string; name: string; employeeId: string } | null;
+}
+interface PlanRow  { id: string; projectId: string; department: string; year: number; month: number; plannedHrs: number; planStatus: string; }
+interface ActualRow { department: string; year: number; month: number; actualHrs: number; }
+
+// Generate month list between two dates (inclusive)
+function monthsBetween(start: Date, end: Date) {
+  const result: { year: number; month: number }[] = [];
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const endUTC = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 1));
+  while (cur < endUTC) {
+    result.push({ year: cur.getUTCFullYear(), month: cur.getUTCMonth() + 1 });
+    cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+  }
+  return result;
+}
 
 export default function ResourcePlanPage() {
   const { data: session } = useSession();
   const router = useRouter();
-
-  const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string>("");
-  const [plans, setPlans] = useState<ResourcePlan[]>([]);
-  const [actuals, setActuals] = useState<ActualEntry[]>([]);
-  const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState<string | null>(null);
-  const [addEmpId, setAddEmpId] = useState("");
-  const [addHrs, setAddHrs] = useState<number>(40);
-
   const role = (session?.user as any)?.role;
-  // Resource Plan: PM only (Admin uses Admin View; PD uses Approve Plan)
   const canAccess = role === "pm";
 
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
-  const weekEnd = new Date(currentWeek); weekEnd.setDate(weekEnd.getDate() + 6);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string>("");
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [actuals, setActuals] = useState<ActualRow[]>([]);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Separate: load projects list and load week data
-  const loadProjects = useCallback(async () => {
-    const res = await fetch(`/api/resource-plan?week=${format(currentWeek, 'yyyy-MM-dd')}`);
-    const data = await res.json();
-    setProjects(data.projects || []);
-    setAllEmployees(data.allEmployees || []);
-    // Auto-select first project on first load
-    if (data.projects?.length > 0) {
-      setSelectedProject((prev) => prev || data.projects[0].id);
-    }
-  }, [currentWeek]);
-
-  const loadWeekData = useCallback(async (projectId: string) => {
-    if (!projectId) return;
+  const load = useCallback(async (projectId?: string) => {
     setLoading(true);
-    const res = await fetch(`/api/resource-plan?week=${format(currentWeek, 'yyyy-MM-dd')}&projectId=${projectId}`);
-    const data = await res.json();
-    setPlans(data.plans || []);
-    setActuals(data.actuals || []);
+    const url = projectId
+      ? `/api/resource-plan-monthly?projectId=${projectId}`
+      : `/api/resource-plan-monthly`;
+    const res = await fetch(url);
+    const d = await res.json();
+    setProjects(d.projects || []);
+    setDepartments(d.departments || []);
+    setPlans(d.plans || []);
+    setActuals(d.actuals || []);
     setLoading(false);
-  }, [currentWeek]);
+  }, []);
 
-  // Load projects when week changes
-  useEffect(() => { if (canAccess) loadProjects(); }, [loadProjects, canAccess]);
+  useEffect(() => { if (canAccess) load(); }, [canAccess, load]);
+  useEffect(() => { if (selectedProject) load(selectedProject); }, [selectedProject, load]);
 
-  // Load week data when project or week changes
-  useEffect(() => { if (selectedProject) loadWeekData(selectedProject); }, [loadWeekData, selectedProject]);
+  const selectedProj = projects.find((p) => p.id === selectedProject);
 
-  // Build merged rows
-  const buildRows = (): ResourceRow[] => {
-    const map = new Map<string, ResourceRow>();
-    for (const p of plans) {
-      map.set(p.employeeId, { employee: p.employee, planId: p.id, plannedHrs: p.plannedHrs, actualHrs: 0 });
-    }
-    for (const a of actuals) {
-      const empId = a.timesheet.employee.id;
-      if (map.has(empId)) { map.get(empId)!.actualHrs += a.totalHrs; }
-      else {
-        const emp = allEmployees.find((e) => e.id === empId);
-        if (emp) map.set(empId, { employee: emp, plannedHrs: 0, actualHrs: a.totalHrs });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => a.employee.name.localeCompare(b.employee.name));
-  };
+  // Derive months from project dates (or show a 12-month rolling window)
+  const months = selectedProj
+    ? (() => {
+        const start = selectedProj.startDate ? new Date(selectedProj.startDate) : new Date();
+        const end   = selectedProj.endDate   ? new Date(selectedProj.endDate)   : new Date(start.getUTCFullYear() + 1, start.getUTCMonth(), 1);
+        return monthsBetween(start, end);
+      })()
+    : [];
 
-  const rows = buildRows();
-  const totalPlanned = rows.reduce((s, r) => s + r.plannedHrs, 0);
-  const totalActual = rows.reduce((s, r) => s + r.actualHrs, 0);
+  const planStatus = plans.length > 0 ? plans[0].planStatus : "draft";
 
-  async function savePlan(empId: string, hrs: number) {
-    if (!selectedProject) return;
-    setSaving(empId);
-    await fetch("/api/resource-plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: selectedProject, employeeId: empId, weekStart: format(currentWeek, 'yyyy-MM-dd'), plannedHrs: hrs }),
-    });
-    setSaving(null);
-    loadWeekData(selectedProject);
+  function getPlanned(dept: string, year: number, month: number): number {
+    return plans.find((p) => p.department === dept && p.year === year && p.month === month)?.plannedHrs || 0;
+  }
+  function getActual(dept: string, year: number, month: number): number {
+    return actuals.find((a) => a.department === dept && a.year === year && a.month === month)?.actualHrs || 0;
   }
 
-  async function removePlan(planId: string) {
-    await fetch(`/api/resource-plan?id=${planId}`, { method: "DELETE" });
-    loadWeekData(selectedProject);
+  async function savePlan(dept: string, year: number, month: number, hrs: number) {
+    if (!selectedProject) return;
+    const key = `${dept}|${year}|${month}`;
+    setSaving(key);
+    await fetch("/api/resource-plan-monthly", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: selectedProject, department: dept, year, month, plannedHrs: hrs }),
+    });
+    setSaving(null);
+    load(selectedProject);
   }
 
   async function submitPlan() {
     if (!selectedProject) return;
     setSaving("submit");
-    await fetch("/api/resource-plan", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "submit", projectId: selectedProject, weekStart: format(currentWeek, 'yyyy-MM-dd') }),
+    await fetch("/api/resource-plan-monthly", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "submit", projectId: selectedProject }),
     });
     setSaving(null);
-    await loadWeekData(selectedProject);
+    load(selectedProject);
   }
 
-  async function handleAddMember() {
-    if (!addEmpId || !selectedProject) return;
-    setSaving("add");
-    const res = await fetch("/api/resource-plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: selectedProject, employeeId: addEmpId, weekStart: format(currentWeek, 'yyyy-MM-dd'), plannedHrs: addHrs }),
-    });
-    setSaving(null);
-    if (res.ok) {
-      setAddEmpId("");
-      setAddHrs(40);
-      await loadWeekData(selectedProject);
-      await loadProjects(); // refresh employee list
-    } else {
-      alert("เกิดข้อผิดพลาด: " + (await res.json()).error);
-    }
-  }
+  // Totals
+  const deptTotals = departments.map((dept) => months.reduce((s, m) => s + getPlanned(dept, m.year, m.month), 0));
+  const monthTotals = months.map((m) => departments.reduce((s, dept) => s + getPlanned(dept, m.year, m.month), 0));
+  const grandTotal  = deptTotals.reduce((s, v) => s + v, 0);
 
-  const assignedIds = new Set(rows.map((r) => r.employee.id));
-  const availableToAdd = allEmployees.filter((e) => !assignedIds.has(e.id));
-  const selectedProj = projects.find((p) => p.id === selectedProject);
+  const deptActualTotals  = departments.map((dept) => months.reduce((s, m) => s + getActual(dept, m.year, m.month), 0));
+  const monthActualTotals = months.map((m) => departments.reduce((s, dept) => s + getActual(dept, m.year, m.month), 0));
+  const grandActualTotal  = deptActualTotals.reduce((s, v) => s + v, 0);
 
   if (!canAccess) return null;
 
@@ -141,16 +118,8 @@ export default function ResourcePlanPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">วางแผนทรัพยากร</h1>
-          <p className="text-gray-500 text-sm">กำหนดชั่วโมงทำงานที่คาดหวังต่อสัปดาห์</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => { setCurrentWeek((w) => subWeeks(w, 1)); setSelectedProject(""); }} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
-          <div className="text-center min-w-[180px]">
-            <p className="font-semibold text-sm">{format(currentWeek, "dd MMM")} – {format(weekEnd, "dd MMM yyyy")}</p>
-            <p className="text-xs text-gray-400">สัปดาห์ที่ {format(currentWeek, "w")}</p>
-          </div>
-          <button onClick={() => { setCurrentWeek((w) => addWeeks(w, 1)); setSelectedProject(""); }} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
+          <h1 className="text-2xl font-bold text-gray-900">Resource Plan</h1>
+          <p className="text-gray-500 text-sm">วางแผนทรัพยากรระยะยาว แยกตามแผนก รายเดือน</p>
         </div>
       </div>
 
@@ -172,6 +141,11 @@ export default function ResourcePlanPage() {
                     className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors ${selectedProject === p.id ? "bg-blue-900 text-white" : "bg-gray-50 hover:bg-gray-100 text-gray-800"}`}>
                     <p className={`font-mono text-xs font-semibold ${selectedProject === p.id ? "text-blue-200" : "text-blue-600"}`}>{p.projectNumber}</p>
                     <p className="text-xs mt-0.5 leading-tight line-clamp-2">{p.projectName}</p>
+                    {p.startDate && p.endDate && (
+                      <p className={`text-xs mt-0.5 ${selectedProject === p.id ? "text-blue-300" : "text-gray-400"}`}>
+                        {new Date(p.startDate).getUTCFullYear()} – {new Date(p.endDate).getUTCFullYear()}
+                      </p>
+                    )}
                   </button>
                 ))}
               </div>
@@ -186,149 +160,174 @@ export default function ResourcePlanPage() {
               <p className="text-3xl mb-2">👈</p>
               <p>เลือกโครงการจากด้านซ้าย</p>
             </div>
+          ) : !selectedProj?.startDate || !selectedProj?.endDate ? (
+            <div className="ges-card p-8 text-center">
+              <p className="text-3xl mb-3">📅</p>
+              <p className="text-gray-700 font-semibold">ยังไม่ได้ตั้งวันเริ่มต้น/สิ้นสุดโครงการ</p>
+              <p className="text-gray-500 text-sm mt-1">ให้ Admin ตั้งค่าวันที่โครงการในหน้า Manage → โครงการ</p>
+            </div>
           ) : (
             <>
-              {/* Project header */}
+              {/* Project Header */}
               <div className="ges-card p-5">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-mono text-blue-600 font-semibold">{selectedProj?.projectNumber}</p>
-                      {plans.length > 0 && (
-                        <PlanStatusBadge status={plans[0].planStatus} />
+                      <span className="font-mono text-xs text-blue-600 font-semibold">{selectedProj.projectNumber}</span>
+                      <PlanStatusBadge status={planStatus} />
+                    </div>
+                    <h2 className="text-lg font-bold text-gray-900 mt-0.5">{selectedProj.projectName}</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {selectedProj.startDate ? new Date(selectedProj.startDate).toLocaleDateString("th-TH") : "–"}
+                      {" → "}
+                      {selectedProj.endDate   ? new Date(selectedProj.endDate).toLocaleDateString("th-TH") : "–"}
+                      {" · "}{months.length} เดือน
+                    </p>
+                  </div>
+                  <div className="flex gap-3 items-center flex-wrap">
+                    <div className="text-center">
+                      <p className="text-xl font-bold text-blue-900">{grandTotal}h</p>
+                      <p className="text-xs text-gray-500">วางแผนรวม</p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-200" />
+                    <div className="text-center">
+                      <p className={`text-xl font-bold ${grandActualTotal > 0 ? "text-green-600" : "text-gray-400"}`}>{grandActualTotal}h</p>
+                      <p className="text-xs text-gray-500">จริงรวม</p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-200" />
+                    {/* Actions */}
+                    <div className="flex gap-2">
+                      <a href={`/api/resource-plan-monthly/template?projectId=${selectedProject}`}
+                        className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+                        📥 Excel Template
+                      </a>
+                      {planStatus !== "approved" && (
+                        <button onClick={submitPlan} disabled={saving === "submit" || grandTotal === 0}
+                          className="ges-btn-primary text-xs px-3 py-1.5">
+                          {saving === "submit" ? "กำลังส่ง…" : planStatus === "submitted" ? "✓ ส่งแล้ว" : "📤 Submit Plan"}
+                        </button>
                       )}
                     </div>
-                    <h2 className="text-lg font-bold text-gray-900 mt-0.5">{selectedProj?.projectName}</h2>
-                  </div>
-                  <div className="flex gap-4 flex-shrink-0 text-center items-center">
-                    {rows.length > 0 && plans[0]?.planStatus !== "approved" && (
-                      <button
-                        onClick={submitPlan}
-                        disabled={saving === "submit" || rows.length === 0}
-                        className="ges-btn-primary text-xs px-3 py-1.5"
-                      >
-                        {saving === "submit" ? "Submitting…" : plans[0]?.planStatus === "submitted" ? "✓ ส่งแล้ว" : "📤 Submit Plan"}
-                      </button>
-                    )}
-                    <div><p className="text-xl font-bold text-blue-900">{totalPlanned}h</p><p className="text-xs text-gray-500">วางแผน</p></div>
-                    <div className="w-px bg-gray-200" />
-                    <div><p className={`text-xl font-bold ${totalActual >= totalPlanned && totalPlanned > 0 ? "text-green-600" : "text-amber-600"}`}>{totalActual}h</p><p className="text-xs text-gray-500">จริง</p></div>
-                    <div className="w-px bg-gray-200" />
-                    <div><p className={`text-xl font-bold ${totalPlanned > 0 && Math.round(totalActual/totalPlanned*100) >= 80 ? "text-green-600" : "text-gray-500"}`}>{totalPlanned > 0 ? Math.round(totalActual/totalPlanned*100) : 0}%</p><p className="text-xs text-gray-500">Utilization</p></div>
                   </div>
                 </div>
-                {totalPlanned > 0 && (
-                  <div className="mt-4">
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${totalActual >= totalPlanned ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${Math.min(totalActual/totalPlanned*100, 100)}%` }} />
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">{totalActual}h จาก {totalPlanned}h ที่วางแผน</p>
-                  </div>
-                )}
               </div>
 
-              {/* Resource Table */}
-              <div className="ges-card overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100">
-                  <h3 className="font-semibold text-gray-800 text-sm">ทรัพยากรในโครงการ ({rows.length} คน)</h3>
+              {/* Plan Matrix */}
+              <div className="ges-card overflow-x-auto">
+                <div className="px-5 py-3 border-b border-gray-100 flex justify-between items-center">
+                  <h3 className="font-semibold text-gray-800 text-sm">ตารางแผน (ชั่วโมง/เดือน/แผนก)</h3>
+                  <p className="text-xs text-gray-400">{months.length > 0 ? `${MONTH_NAMES[months[0].month-1]} ${months[0].year} – ${MONTH_NAMES[months[months.length-1].month-1]} ${months[months.length-1].year}` : ""}</p>
                 </div>
-                {loading ? <div className="p-8 text-center text-gray-400">กำลังโหลด…</div> : (
-                  <table className="ges-table w-full">
-                    <thead><tr>
-                      <th className="text-left">พนักงาน</th>
-                      <th className="text-left">แผนก</th>
-                      <th>วางแผน (h)</th>
-                      <th>จริง (h)</th>
-                      <th>% Util</th>
-                      <th>สถานะ</th>
-                      <th className="w-12"></th>
-                    </tr></thead>
+                {loading ? <div className="p-8 text-center text-gray-400 animate-pulse">กำลังโหลด…</div> : (
+                  <table className="text-sm w-full">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="text-left px-4 py-2.5 font-semibold text-gray-700 min-w-[160px] sticky left-0 bg-gray-50 border-r border-gray-200 z-10">แผนก</th>
+                        {months.map((m) => (
+                          <th key={`${m.year}-${m.month}`} className="px-2 py-2.5 font-medium text-center min-w-[80px] text-xs text-gray-600">
+                            <div>{MONTH_NAMES_TH[m.month-1]}</div>
+                            <div className="text-gray-400">{m.year}</div>
+                          </th>
+                        ))}
+                        <th className="px-3 py-2.5 text-center min-w-[70px] font-semibold text-gray-700 border-l border-gray-200">รวม</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {rows.length === 0 ? (
-                        <tr><td colSpan={7} className="text-center py-8 text-gray-400">ยังไม่มีทรัพยากร — เพิ่มด้านล่างได้เลย</td></tr>
-                      ) : rows.map((row) => {
-                        const util = row.plannedHrs > 0 ? Math.round(row.actualHrs/row.plannedHrs*100) : null;
-                        const over = row.plannedHrs > 0 && row.actualHrs > row.plannedHrs;
-                        return (
-                          <tr key={row.employee.id}>
-                            <td><p className="font-medium text-sm">{row.employee.name}</p><p className="text-xs text-gray-400 font-mono">{row.employee.employeeId}</p></td>
-                            <td className="text-xs text-gray-500">{row.employee.department}</td>
-                            <td className="text-center">
-                              <input type="number" min="0" max="80" step="4" defaultValue={row.plannedHrs}
-                                key={`${row.employee.id}-${row.plannedHrs}`}
-                                onBlur={(e) => { const v = Number(e.target.value); if (v !== row.plannedHrs) savePlan(row.employee.id, v); }}
-                                className="w-16 text-center border border-gray-200 rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                            </td>
-                            <td className="text-center font-semibold text-sm">
-                              <span className={row.actualHrs > 0 ? (over ? "text-red-600" : "text-green-700") : "text-gray-400"}>{row.actualHrs > 0 ? `${row.actualHrs}h` : "-"}</span>
-                            </td>
-                            <td className="text-center">
-                              {util !== null ? (
-                                <div className="flex items-center gap-2 justify-center">
-                                  <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full ${over ? "bg-red-400" : util >= 80 ? "bg-green-500" : "bg-amber-400"}`} style={{ width: `${Math.min(util, 100)}%` }} />
-                                  </div>
-                                  <span className={`text-xs font-medium w-9 ${over ? "text-red-600" : util >= 80 ? "text-green-700" : "text-amber-600"}`}>{util}%</span>
+                      {departments.map((dept, di) => (
+                        <tr key={dept} className="border-t border-gray-100 hover:bg-gray-50">
+                          <td className="px-4 py-2 font-medium text-gray-800 sticky left-0 bg-white border-r border-gray-200 z-10">{dept}</td>
+                          {months.map((m) => {
+                            const key   = `${dept}|${m.year}|${m.month}`;
+                            const plan  = getPlanned(dept, m.year, m.month);
+                            const actual = getActual(dept, m.year, m.month);
+                            const isLocked = planStatus === "approved";
+                            return (
+                              <td key={`${m.year}-${m.month}`} className="px-1 py-1 text-center">
+                                <div className="relative">
+                                  <input
+                                    type="number" min="0" step="8"
+                                    defaultValue={plan}
+                                    key={`${dept}-${m.year}-${m.month}-${plan}`}
+                                    disabled={isLocked}
+                                    onBlur={(e) => {
+                                      const v = Number(e.target.value);
+                                      if (v !== plan) savePlan(dept, m.year, m.month, v);
+                                    }}
+                                    className={`w-16 text-center border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                      isLocked ? "bg-gray-50 text-gray-400 border-gray-100 cursor-not-allowed" :
+                                      saving === key ? "border-blue-300 bg-blue-50" :
+                                      plan > 0 ? "border-blue-200 text-blue-900 font-semibold" : "border-gray-200 text-gray-400"
+                                    }`}
+                                  />
+                                  {actual > 0 && (
+                                    <div className={`text-xs mt-0.5 ${actual > plan && plan > 0 ? "text-red-500" : "text-green-600"}`}>
+                                      {actual}h จริง
+                                    </div>
+                                  )}
                                 </div>
-                              ) : "-"}
-                            </td>
-                            <td className="text-center">
-                              {row.plannedHrs > 0 && row.actualHrs === 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">ยังไม่ submit</span>}
-                              {over && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">เกิน</span>}
-                              {util !== null && util >= 80 && !over && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">ดี</span>}
-                            </td>
-                            <td className="text-center">
-                              {row.planId && <button onClick={() => removePlan(row.planId!)} className="text-gray-300 hover:text-red-500 text-lg leading-none" title="ลบ">×</button>}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              </td>
+                            );
+                          })}
+                          {/* Row total */}
+                          <td className="px-3 py-2 text-center border-l border-gray-200">
+                            <span className={`font-semibold text-sm ${deptTotals[di] > 0 ? "text-blue-900" : "text-gray-300"}`}>{deptTotals[di] || "–"}</span>
+                            {deptActualTotals[di] > 0 && <div className="text-xs text-green-600">{deptActualTotals[di]}</div>}
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Month totals row */}
+                      <tr className="border-t-2 border-gray-300 bg-blue-50">
+                        <td className="px-4 py-2.5 font-bold text-gray-800 sticky left-0 bg-blue-50 border-r border-gray-200 z-10">รวม / เดือน</td>
+                        {months.map((m, mi) => (
+                          <td key={`${m.year}-${m.month}`} className="px-1 py-2.5 text-center">
+                            <span className={`font-bold text-sm ${monthTotals[mi] > 0 ? "text-blue-900" : "text-gray-300"}`}>{monthTotals[mi] || "–"}</span>
+                            {monthActualTotals[mi] > 0 && <div className="text-xs text-green-600">{monthActualTotals[mi]}</div>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2.5 text-center border-l border-gray-200">
+                          <span className="font-bold text-blue-900 text-sm">{grandTotal || "–"}</span>
+                          {grandActualTotal > 0 && <div className="text-xs text-green-600">{grandActualTotal}</div>}
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 )}
               </div>
 
-              {/* Add Member */}
-              <div className="ges-card p-5">
-                <h3 className="font-semibold text-gray-800 text-sm mb-3">➕ เพิ่มพนักงานเข้าโครงการ</h3>
-                {availableToAdd.length === 0 ? (
-                  <p className="text-sm text-gray-400">พนักงานทุกคนถูก assign ในโครงการนี้แล้ว</p>
-                ) : (
-                  <div className="flex flex-wrap gap-3 items-end">
-                    <div className="flex-1 min-w-[220px]">
-                      <label className="block text-xs text-gray-500 mb-1">เลือกพนักงาน *</label>
-                      <select value={addEmpId} onChange={(e) => setAddEmpId(e.target.value)} className="ges-input">
-                        <option value="">-- เลือกพนักงาน --</option>
-                        {availableToAdd.map((e) => (
-                          <option key={e.id} value={e.id}>{e.employeeId} – {e.name} ({e.department})</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="w-36">
-                      <label className="block text-xs text-gray-500 mb-1">ชั่วโมงที่วางแผน</label>
-                      <input type="number" min="0" max="80" step="4" value={addHrs} onChange={(e) => setAddHrs(Number(e.target.value))} className="ges-input" />
-                    </div>
-                    <button onClick={handleAddMember} disabled={!addEmpId || saving === "add"} className="ges-btn-primary">
-                      {saving === "add" ? "กำลังเพิ่ม…" : "+ เพิ่ม"}
-                    </button>
-                  </div>
-                )}
+              {/* Legend */}
+              <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                <span className="flex items-center gap-1"><span className="text-blue-900 font-semibold">●</span> ตัวเลขในตาราง = ชั่วโมงที่วางแผน</span>
+                <span className="flex items-center gap-1"><span className="text-green-600 font-semibold">●</span> ตัวเลขสีเขียว = ชั่วโมงที่ลงจริงจาก Timesheet</span>
+                <span className="flex items-center gap-1"><span className="text-red-500 font-semibold">●</span> สีแดง = เกินแผน</span>
               </div>
 
-              {/* Summary */}
-              {rows.length > 0 && (
-                <div className="grid grid-cols-3 gap-4">
-                  {[
-                    { label: "On Track", value: rows.filter(r => r.plannedHrs > 0 && r.actualHrs >= r.plannedHrs * 0.8 && r.actualHrs <= r.plannedHrs).length, color: "text-green-700", bg: "bg-green-50", desc: "≥ 80% ของแผน" },
-                    { label: "ต่ำกว่าแผน", value: rows.filter(r => r.plannedHrs > 0 && r.actualHrs < r.plannedHrs * 0.8).length, color: "text-amber-700", bg: "bg-amber-50", desc: "< 80% ของแผน" },
-                    { label: "เกินแผน", value: rows.filter(r => r.plannedHrs > 0 && r.actualHrs > r.plannedHrs).length, color: "text-red-700", bg: "bg-red-50", desc: "> 100% ของแผน" },
-                  ].map(s => (
-                    <div key={s.label} className={`ges-card p-4 ${s.bg}`}>
-                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                      <p className="text-sm font-medium text-gray-700 mt-0.5">{s.label}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{s.desc}</p>
-                    </div>
-                  ))}
+              {/* Summary by dept */}
+              {grandTotal > 0 && (
+                <div className="ges-card p-5">
+                  <h3 className="font-semibold text-gray-800 text-sm mb-3">สรุปแผนกทั้งหมด</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {departments.filter((_, i) => deptTotals[i] > 0).map((dept, i) => {
+                      const plan   = deptTotals[i];
+                      const actual = deptActualTotals[i];
+                      const pct    = plan > 0 ? Math.round((actual / plan) * 100) : 0;
+                      return (
+                        <div key={dept} className="bg-gray-50 rounded-xl p-3">
+                          <p className="text-xs font-semibold text-gray-700 truncate">{dept}</p>
+                          <p className="text-lg font-bold text-blue-900 mt-1">{plan}h</p>
+                          {actual > 0 && (
+                            <>
+                              <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mt-1.5">
+                                <div className={`h-full rounded-full ${pct >= 100 ? "bg-red-400" : pct >= 80 ? "bg-green-500" : "bg-amber-400"}`}
+                                  style={{ width: `${Math.min(pct, 100)}%` }} />
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">จริง {actual}h ({pct}%)</p>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </>
@@ -341,9 +340,9 @@ export default function ResourcePlanPage() {
 
 function PlanStatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    draft:     { label: "Draft",     cls: "bg-gray-100 text-gray-600" },
-    submitted: { label: "📤 รอ Approve", cls: "bg-amber-100 text-amber-800" },
-    approved:  { label: "✓ Approved by PD", cls: "bg-green-100 text-green-800" },
+    draft:     { label: "Draft",             cls: "bg-gray-100 text-gray-600" },
+    submitted: { label: "📤 รอ Approve",      cls: "bg-amber-100 text-amber-800" },
+    approved:  { label: "✓ Approved by PD",  cls: "bg-green-100 text-green-800" },
   };
   const s = map[status] ?? map.draft;
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
