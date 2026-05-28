@@ -99,16 +99,11 @@ export async function POST(req: NextRequest) {
     if (field) holidayFields.add(field);
   }
 
-  // Validate: no hours entered on holiday days
+  // Silently zero out any hours on holiday days (handles timesheets filled before holidays were set)
   if (holidayFields.size > 0 && entries) {
     for (const e of entries) {
       for (const field of Array.from(holidayFields)) {
-        if ((e[field] || 0) > 0) {
-          const hol = holidays.find((h) => DAY_FIELDS[new Date(h.date).getUTCDay()] === field);
-          return NextResponse.json({
-            error: `ไม่สามารถลงชั่วโมงในวันหยุด "${hol?.name || field}" ได้`,
-          }, { status: 400 });
-        }
+        e[field] = 0; // zero out rather than blocking — protects data integrity gracefully
       }
     }
   }

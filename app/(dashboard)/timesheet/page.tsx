@@ -133,8 +133,9 @@ export default function TimesheetPage() {
 
   useEffect(() => { loadTimesheet(); }, [loadTimesheet]);
 
-  const totalByDay = DAYS.map((d) =>
-    rows.reduce((sum, r) => sum + (Number(r[d.key]) || 0), 0)
+  // Holiday days don't count toward totals (even if old saved data has hours there)
+  const totalByDay = DAYS.map((d, i) =>
+    isHoliday(i) ? 0 : rows.reduce((sum, r) => sum + (Number(r[d.key]) || 0), 0)
   );
   const totalWeekHrs = totalByDay.reduce((a, b) => a + b, 0);
 
@@ -159,6 +160,13 @@ export default function TimesheetPage() {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
       return;
     }
+    // Zero out holiday-day hours before sending (handles data entered before holidays were set)
+    const sanitizedRows = validRows.map((row) => {
+      const r = { ...row };
+      DAYS.forEach((d, i) => { if (isHoliday(i)) (r as any)[d.key] = 0; });
+      return r;
+    });
+
     if (action === "submit" && totalWeekHrs < weekCapacity) {
       const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than ${weekCapacity}h (ปรับตามวันหยุด). Submit anyway?`);
       if (!ok) return;
@@ -173,7 +181,7 @@ export default function TimesheetPage() {
         body: JSON.stringify({
           weekStart: format(currentWeek, "yyyy-MM-dd"),
           weekEnd:   format(weekEnd, "yyyy-MM-dd"),
-          entries:   validRows,
+          entries:   sanitizedRows,
           action:    action === "submit" ? "submit" : "save",
         }),
       });
@@ -306,7 +314,8 @@ export default function TimesheetPage() {
           </thead>
           <tbody>
             {rows.map((row) => {
-              const rowTotal = DAYS.reduce((sum, d) => sum + (Number(row[d.key]) || 0), 0);
+              // Exclude holiday-day hours from row total
+              const rowTotal = DAYS.reduce((sum, d, i) => sum + (isHoliday(i) ? 0 : Number(row[d.key]) || 0), 0);
               return (
                 <tr key={row.id}>
                   {/* Project selector */}
