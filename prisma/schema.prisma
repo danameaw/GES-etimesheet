@@ -17,10 +17,11 @@ model Employee {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
 
-  timesheets     Timesheet[]
-  auditLogs      AuditLog[]
-  managedProjects Project[]      @relation("ProjectManager")
-  resourcePlans  ResourcePlan[]
+  timesheets       Timesheet[]
+  auditLogs        AuditLog[]
+  managedProjects  Project[]      @relation("ProjectManager")
+  directedProjects Project[]      @relation("ProjectDirector")
+  resourcePlans    ResourcePlan[]
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
 }
 
@@ -30,11 +31,14 @@ model Project {
   projectName   String
   projectType   String    @default("project")
   isActive      Boolean   @default(true)
-  managerId     String?
+  managerId     String?   // PM (Project Manager)
+  pdId          String?   // PD (Project Director)
+  planStatus    String    @default("draft") // draft | submitted | revision_requested | approved
   startDate     DateTime?
   endDate       DateTime?
 
   manager              Employee?             @relation("ProjectManager", fields: [managerId], references: [id])
+  pd                   Employee?             @relation("ProjectDirector", fields: [pdId], references: [id])
   entries              TimesheetEntry[]
   resourcePlans        ResourcePlan[]
   resourcePlansMonthly ResourcePlanMonthly[]
@@ -109,7 +113,7 @@ model Holiday {
   createdAt DateTime @default(now())
 }
 
-// Long-term monthly resource plan by department (replaces weekly per-person plan for new workflow)
+// Long-term monthly resource plan by department
 model ResourcePlanMonthly {
   id          String   @id @default(cuid())
   projectId   String
@@ -117,7 +121,7 @@ model ResourcePlanMonthly {
   year        Int
   month       Int      // 1–12
   plannedHrs  Float    @default(0)
-  planStatus  String   @default("draft") // draft | submitted | approved
+  planStatus  String   @default("draft") // draft | submitted | revision_requested | approved
   createdBy   String
   updatedAt   DateTime @updatedAt
 
@@ -134,7 +138,7 @@ model ResourcePlanEmployeeMonthly {
   year        Int
   month       Int      // 1–12
   plannedHrs  Float    @default(0)
-  planStatus  String   @default("draft") // draft | submitted | approved
+  planStatus  String   @default("draft") // draft | submitted | revision_requested | approved
   createdBy   String
   updatedAt   DateTime @updatedAt
 

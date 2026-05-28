@@ -30,14 +30,21 @@ interface TimesheetRow {
   sunHrs: number;
 }
 
+interface Holiday {
+  id: string;
+  date: string;
+  name: string;
+  type: string;
+}
+
 const DAYS: { key: keyof TimesheetRow; label: string; short: string }[] = [
-  { key: "monHrs", label: "Monday", short: "Mon" },
-  { key: "tueHrs", label: "Tuesday", short: "Tue" },
+  { key: "monHrs", label: "Monday",    short: "Mon" },
+  { key: "tueHrs", label: "Tuesday",   short: "Tue" },
   { key: "wedHrs", label: "Wednesday", short: "Wed" },
-  { key: "thuHrs", label: "Thursday", short: "Thu" },
-  { key: "friHrs", label: "Friday", short: "Fri" },
-  { key: "satHrs", label: "Saturday", short: "Sat" },
-  { key: "sunHrs", label: "Sunday", short: "Sun" },
+  { key: "thuHrs", label: "Thursday",  short: "Thu" },
+  { key: "friHrs", label: "Friday",    short: "Fri" },
+  { key: "satHrs", label: "Saturday",  short: "Sat" },
+  { key: "sunHrs", label: "Sunday",    short: "Sun" },
 ];
 
 let rowCounter = 0;
@@ -53,12 +60,13 @@ function newRow(): TimesheetRow {
 export default function TimesheetPage() {
   const { data: session } = useSession();
   const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [taskCodes, setTaskCodes] = useState<TaskCode[]>([]);
-  const [rows, setRows] = useState<TimesheetRow[]>([newRow()]);
+  const [projects, setProjects]       = useState<Project[]>([]);
+  const [taskCodes, setTaskCodes]     = useState<TaskCode[]>([]);
+  const [holidays, setHolidays]       = useState<Holiday[]>([]);
+  const [rows, setRows]               = useState<TimesheetRow[]>([newRow()]);
   const [timesheetStatus, setTimesheetStatus] = useState<string>("draft");
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [message, setMessage]         = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
 
   const weekEnd = new Date(currentWeek);
   weekEnd.setDate(weekEnd.getDate() + 6);
@@ -71,6 +79,20 @@ export default function TimesheetPage() {
     return d;
   });
 
+  // Build date-string set for fast holiday lookup: "yyyy-MM-dd"
+  const holidayDateSet = new Set(holidays.map((h) => h.date.slice(0, 10)));
+  const weekDateStrings = weekDates.map((d) => format(d, "yyyy-MM-dd"));
+  const isHoliday = (dayIndex: number) => holidayDateSet.has(weekDateStrings[dayIndex]);
+  const holidayName = (dayIndex: number) =>
+    holidays.find((h) => h.date.slice(0, 10) === weekDateStrings[dayIndex])?.name;
+
+  // Count working-day holidays (Mon–Fri) in this week
+  const weekHolidayCount = weekDates.filter((d, i) => {
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    return dow >= 1 && dow <= 5 && isHoliday(i);
+  }).length;
+  const weekCapacity = 40 - weekHolidayCount * 8;
+
   // Fetch projects and task codes
   useEffect(() => {
     fetch("/api/projects")
@@ -81,12 +103,15 @@ export default function TimesheetPage() {
       });
   }, []);
 
-  // Fetch timesheet for current week
+  // Fetch timesheet + holidays for current week
   const loadTimesheet = useCallback(async () => {
-    const res = await fetch(`/api/timesheets?week=${format(currentWeek, "yyyy-MM-dd")}`);
+    const weekStr = format(currentWeek, "yyyy-MM-dd");
+    const res = await fetch(`/api/timesheets?week=${weekStr}`);
     const data = await res.json();
-    if (data.timesheet) {
 
+    setHolidays(data.holidays || []);
+
+    if (data.timesheet) {
       setTimesheetStatus(data.timesheet.status);
       if (data.timesheet.entries.length > 0) {
         setRows(data.timesheet.entries.map((e: any) => ({
@@ -133,8 +158,8 @@ export default function TimesheetPage() {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
       return;
     }
-    if (action === "submit" && totalWeekHrs < 40) {
-      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than 40h. Submit anyway?`);
+    if (action === "submit" && totalWeekHrs < weekCapacity) {
+      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than ${weekCapacity}h (ปรับตามวันหยุด). Submit anyway?`);
       if (!ok) return;
     }
 
@@ -146,9 +171,9 @@ export default function TimesheetPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           weekStart: format(currentWeek, "yyyy-MM-dd"),
-          weekEnd: format(weekEnd, "yyyy-MM-dd"),
-          entries: validRows,
-          action: action === "submit" ? "submit" : "save",
+          weekEnd:   format(weekEnd, "yyyy-MM-dd"),
+          entries:   validRows,
+          action:    action === "submit" ? "submit" : "save",
         }),
       });
       const data = await res.json();
@@ -168,8 +193,8 @@ export default function TimesheetPage() {
   }
 
   const isSubmitted = timesheetStatus === "submitted";
-  const isApproved = timesheetStatus === "approved";
-  const canEdit = !isSubmitted && !isApproved;
+  const isApproved  = timesheetStatus === "approved";
+  const canEdit     = !isSubmitted && !isApproved;
 
   return (
     <div>
@@ -182,28 +207,13 @@ export default function TimesheetPage() {
 
         {/* Week navigation */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setCurrentWeek((w) => subWeeks(w, 1))}
-            className="ges-btn-secondary px-3 py-1.5 text-sm"
-          >
-            ← Prev
-          </button>
+          <button onClick={() => setCurrentWeek((w) => subWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← Prev</button>
           <div className="text-center min-w-[200px]">
             <p className="font-semibold text-gray-800 text-sm">{weekLabel}</p>
             <p className="text-xs text-gray-400">Week {format(currentWeek, "w, yyyy")}</p>
           </div>
-          <button
-            onClick={() => setCurrentWeek((w) => addWeeks(w, 1))}
-            className="ges-btn-secondary px-3 py-1.5 text-sm"
-          >
-            Next →
-          </button>
-          <button
-            onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))}
-            className="text-xs text-blue-600 hover:underline ml-1"
-          >
-            Today
-          </button>
+          <button onClick={() => setCurrentWeek((w) => addWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">Next →</button>
+          <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">Today</button>
         </div>
 
         {/* Status badge */}
@@ -218,11 +228,27 @@ export default function TimesheetPage() {
         </div>
       </div>
 
+      {/* Holiday notice for this week */}
+      {holidays.length > 0 && (
+        <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800 flex items-start gap-2">
+          <span className="text-base">🏖️</span>
+          <div>
+            <span className="font-semibold">วันหยุดสัปดาห์นี้: </span>
+            {holidays.map((h, i) => (
+              <span key={h.id}>{i > 0 ? " · " : ""}<strong>{h.name}</strong> ({format(new Date(h.date.slice(0,10) + "T00:00:00"), "dd MMM")})</span>
+            ))}
+            {weekHolidayCount > 0 && (
+              <span className="ml-2 text-red-600">— เพดานสัปดาห์นี้: <strong>{weekCapacity}h</strong></span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Message */}
       {message && (
         <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium ${
           message.type === "success" ? "bg-green-50 text-green-800 border border-green-200" :
-          message.type === "error" ? "bg-red-50 text-red-800 border border-red-200" :
+          message.type === "error"   ? "bg-red-50 text-red-800 border border-red-200" :
           "bg-yellow-50 text-yellow-800 border border-yellow-200"
         }`}>
           {message.text}
@@ -246,10 +272,10 @@ export default function TimesheetPage() {
       )}
 
       {/* Hours warning */}
-      {totalWeekHrs > 0 && totalWeekHrs < 40 && (
+      {totalWeekHrs > 0 && totalWeekHrs < weekCapacity && (
         <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-2">
           <span>⚠️</span>
-          <span>Total hours ({totalWeekHrs}h) is below 40h. Please complete your timesheet.</span>
+          <span>Total hours ({totalWeekHrs}h) is below {weekCapacity}h{weekHolidayCount > 0 ? ` (ปรับตามวันหยุด ${weekHolidayCount} วัน)` : ""}. Please complete your timesheet.</span>
         </div>
       )}
 
@@ -260,12 +286,19 @@ export default function TimesheetPage() {
             <tr>
               <th className="text-left w-[260px]">Project</th>
               <th className="text-left w-[180px]">Task Code</th>
-              {DAYS.map((d, i) => (
-                <th key={d.key} className={weekDates[i].getDay() === 0 || weekDates[i].getDay() === 6 ? "bg-blue-800" : ""}>
-                  <div>{d.short}</div>
-                  <div className="text-blue-200 font-normal text-xs">{format(weekDates[i], "dd/MM")}</div>
-                </th>
-              ))}
+              {DAYS.map((d, i) => {
+                const holName = holidayName(i);
+                const isSat   = weekDates[i].getDay() === 6;
+                const isSun   = weekDates[i].getDay() === 0;
+                const isHol   = isHoliday(i);
+                return (
+                  <th key={d.key} className={isHol ? "bg-red-800" : (isSat || isSun) ? "bg-blue-800" : ""}>
+                    <div>{d.short}</div>
+                    <div className="text-blue-200 font-normal text-xs">{format(weekDates[i], "dd/MM")}</div>
+                    {isHol && <div className="text-red-200 font-normal text-xs leading-tight truncate max-w-[60px]" title={holName}>{holName}</div>}
+                  </th>
+                );
+              })}
               <th>Total</th>
               <th className="w-10"></th>
             </tr>
@@ -302,29 +335,36 @@ export default function TimesheetPage() {
                     >
                       <option value="">-- Task --</option>
                       {taskCodes.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.code} - {t.name}
-                        </option>
+                        <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
                       ))}
                     </select>
                   </td>
 
                   {/* Hours inputs */}
-                  {DAYS.map((d, i) => (
-                    <td key={d.key} className={`text-center ${weekDates[i].getDay() === 0 || weekDates[i].getDay() === 6 ? "bg-gray-50" : ""}`}>
-                      <input
-                        type="number"
-                        min="0"
-                        max="24"
-                        step="0.5"
-                        value={row[d.key] || ""}
-                        onChange={(e) => updateRow(row.id, d.key, e.target.value)}
-                        disabled={!canEdit}
-                        className="hours-input disabled:bg-gray-100"
-                        placeholder="0"
-                      />
-                    </td>
-                  ))}
+                  {DAYS.map((d, i) => {
+                    const isHol   = isHoliday(i);
+                    const isSat   = weekDates[i].getDay() === 6;
+                    const isSun   = weekDates[i].getDay() === 0;
+                    return (
+                      <td key={d.key} className={`text-center ${isHol ? "bg-red-50" : (isSat || isSun) ? "bg-gray-50" : ""}`}>
+                        {isHol ? (
+                          <div className="text-xs text-red-300 font-medium py-1">🏖️</div>
+                        ) : (
+                          <input
+                            type="number"
+                            min="0"
+                            max="24"
+                            step="0.5"
+                            value={row[d.key] || ""}
+                            onChange={(e) => updateRow(row.id, d.key, e.target.value)}
+                            disabled={!canEdit}
+                            className="hours-input disabled:bg-gray-100"
+                            placeholder="0"
+                          />
+                        )}
+                      </td>
+                    );
+                  })}
 
                   {/* Row total */}
                   <td className={`text-center font-semibold text-sm ${rowTotal > 0 ? "text-blue-800" : "text-gray-400"}`}>
@@ -334,9 +374,7 @@ export default function TimesheetPage() {
                   {/* Remove row */}
                   <td className="text-center">
                     {canEdit && rows.length > 1 && (
-                      <button onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600 text-lg leading-none" title="Remove row">
-                        ×
-                      </button>
+                      <button onClick={() => removeRow(row.id)} className="text-red-400 hover:text-red-600 text-lg leading-none" title="Remove row">×</button>
                     )}
                   </td>
                 </tr>
@@ -346,15 +384,19 @@ export default function TimesheetPage() {
             {/* Totals row */}
             <tr className="bg-blue-50">
               <td colSpan={2} className="font-semibold text-sm text-gray-700 px-3 py-2">Daily Total</td>
-              {totalByDay.map((total, i) => (
-                <td key={i} className={`text-center font-bold text-sm ${
-                  total > 0 ? (total > 8 ? "text-red-600" : "text-blue-900") : "text-gray-400"
-                }`}>
-                  {total > 0 ? total : "-"}
-                </td>
-              ))}
+              {totalByDay.map((total, i) => {
+                const isHol = isHoliday(i);
+                return (
+                  <td key={i} className={`text-center font-bold text-sm ${
+                    isHol ? "bg-red-50 text-red-300" :
+                    total > 0 ? (total > 8 ? "text-red-600" : "text-blue-900") : "text-gray-400"
+                  }`}>
+                    {isHol ? "–" : total > 0 ? total : "-"}
+                  </td>
+                );
+              })}
               <td className={`text-center font-bold text-base ${
-                totalWeekHrs >= 40 ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
+                totalWeekHrs >= weekCapacity ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
               }`}>
                 {totalWeekHrs > 0 ? totalWeekHrs : "-"}
               </td>
@@ -373,19 +415,16 @@ export default function TimesheetPage() {
             </button>
           )}
           <span className="text-sm text-gray-500">
-            Week total: <span className={`font-bold ${totalWeekHrs >= 40 ? "text-green-700" : "text-amber-600"}`}>
+            Week total: <span className={`font-bold ${totalWeekHrs >= weekCapacity ? "text-green-700" : "text-amber-600"}`}>
               {totalWeekHrs}h
-            </span> / 40h
+            </span> / {weekCapacity}h
+            {weekHolidayCount > 0 && <span className="text-xs text-red-500 ml-1">(−{weekHolidayCount} วันหยุด)</span>}
           </span>
         </div>
 
         {canEdit && (
           <div className="flex gap-3">
-            <button
-              onClick={() => handleSave("save")}
-              disabled={saving}
-              className="ges-btn-secondary"
-            >
+            <button onClick={() => handleSave("save")} disabled={saving} className="ges-btn-secondary">
               {saving ? "Saving…" : "Save Draft"}
             </button>
             <button
@@ -397,7 +436,6 @@ export default function TimesheetPage() {
             </button>
           </div>
         )}
-
       </div>
     </div>
   );

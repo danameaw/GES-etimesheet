@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const role = (session.user as any).role;
+  const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
   if (!["pm", "admin"].includes(role))
@@ -77,10 +77,15 @@ export async function POST(req: NextRequest) {
   if (!projectId || !employeeId || !year || !month)
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
 
-  if (role === "pm") {
-    const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
-    if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
-  }
+  // Verify project ownership + plan is editable
+  const proj = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  if (role === "pm" && proj.managerId !== empDbId)
+    return NextResponse.json({ error: "Not your project" }, { status: 403 });
+
+  if (role !== "admin" && proj.planStatus !== "draft")
+    return NextResponse.json({ error: "Plan is locked. Request revision first." }, { status: 403 });
 
   const plan = await prisma.resourcePlanEmployeeMonthly.upsert({
     where: { projectId_employeeId_year_month: { projectId, employeeId, year, month } },
@@ -94,7 +99,10 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["pm", "admin"].includes((session.user as any).role))
+  const role    = (session.user as any).role;
+  const empDbId = (session.user as any).id;
+
+  if (!["pm", "admin"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -103,6 +111,16 @@ export async function DELETE(req: NextRequest) {
 
   if (!projectId || !employeeId)
     return NextResponse.json({ error: "Missing params" }, { status: 400 });
+
+  // Verify project ownership + plan is editable
+  const proj = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  if (role === "pm" && proj.managerId !== empDbId)
+    return NextResponse.json({ error: "Not your project" }, { status: 403 });
+
+  if (role !== "admin" && proj.planStatus !== "draft")
+    return NextResponse.json({ error: "Plan is locked. Request revision first." }, { status: 403 });
 
   await prisma.resourcePlanEmployeeMonthly.deleteMany({ where: { projectId, employeeId } });
   return NextResponse.json({ success: true });

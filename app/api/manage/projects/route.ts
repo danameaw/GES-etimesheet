@@ -10,13 +10,18 @@ async function requireAdmin(session: any) {
   return null;
 }
 
+const PROJECT_INCLUDE = {
+  manager: { select: { id: true, name: true, employeeId: true } },
+  pd:      { select: { id: true, name: true, employeeId: true } },
+};
+
 export async function GET(_req: NextRequest) {
   const session = await getServerSession(authOptions);
   const err = await requireAdmin(session);
   if (err) return err;
 
   const projects = await prisma.project.findMany({
-    include: { manager: { select: { id: true, name: true, employeeId: true } } },
+    include: PROJECT_INCLUDE,
     orderBy: { projectNumber: "asc" },
   });
   return NextResponse.json({ projects });
@@ -28,7 +33,7 @@ export async function POST(req: NextRequest) {
   if (err) return err;
 
   const body = await req.json();
-  const { projectNumber, projectName, projectType, managerId, startDate, endDate, isActive } = body;
+  const { projectNumber, projectName, projectType, managerId, pdId, startDate, endDate, isActive } = body;
 
   if (!projectNumber?.trim() || !projectName?.trim())
     return NextResponse.json({ error: "Project number and name are required" }, { status: 400 });
@@ -39,11 +44,12 @@ export async function POST(req: NextRequest) {
       projectName:   projectName.trim(),
       projectType:   projectType || "project",
       managerId:     managerId || null,
+      pdId:          pdId || null,
       startDate:     startDate ? new Date(startDate + "T00:00:00.000Z") : null,
       endDate:       endDate   ? new Date(endDate   + "T00:00:00.000Z") : null,
       isActive:      isActive !== false,
     },
-    include: { manager: { select: { id: true, name: true, employeeId: true } } },
+    include: PROJECT_INCLUDE,
   });
   return NextResponse.json({ project });
 }
@@ -54,7 +60,7 @@ export async function PATCH(req: NextRequest) {
   if (err) return err;
 
   const body = await req.json();
-  const { id, projectNumber, projectName, projectType, managerId, startDate, endDate, isActive } = body;
+  const { id, projectNumber, projectName, projectType, managerId, pdId, startDate, endDate, isActive } = body;
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const project = await prisma.project.update({
@@ -63,12 +69,13 @@ export async function PATCH(req: NextRequest) {
       projectNumber: projectNumber?.trim().toUpperCase(),
       projectName:   projectName?.trim(),
       projectType,
-      managerId:  managerId || null,
-      startDate:  startDate ? new Date(startDate + "T00:00:00.000Z") : null,
-      endDate:    endDate   ? new Date(endDate   + "T00:00:00.000Z") : null,
+      managerId: managerId || null,
+      pdId:      pdId      || null,
+      startDate: startDate ? new Date(startDate + "T00:00:00.000Z") : null,
+      endDate:   endDate   ? new Date(endDate   + "T00:00:00.000Z") : null,
       isActive,
     },
-    include: { manager: { select: { id: true, name: true, employeeId: true } } },
+    include: PROJECT_INCLUDE,
   });
   return NextResponse.json({ project });
 }

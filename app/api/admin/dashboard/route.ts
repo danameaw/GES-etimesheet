@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
 
   // ── 3. Utilization Trend (6 weeks) ──
   const totalEmployees = await prisma.employee.count({ where: { isActive: true } });
-  const weeklyTrend: { week: string; utilization: number; totalHrs: number }[] = [];
+  const weeklyTrend: { week: string; utilization: number; totalHrs: number; capacity: number }[] = [];
   const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
 
   async function getWeekHrs(wStart: Date) {
@@ -116,21 +116,33 @@ export async function GET(req: NextRequest) {
     return wTs.reduce((s, ts) => s + (ts.entries as any[]).reduce((ss: number, e: any) => ss + e.totalHrs, 0), 0);
   }
 
+  // Count Mon–Fri holidays in a 7-day window starting from wStart
+  async function getWeekHolidayDays(wStart: Date): Promise<number> {
+    const wEnd = new Date(wStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const hols = await prisma.holiday.findMany({ where: { date: { gte: wStart, lt: wEnd } } });
+    return hols.filter((h) => {
+      const d = new Date(h.date).getUTCDay();
+      return d >= 1 && d <= 5; // Mon–Fri only
+    }).length;
+  }
+
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
     const mStart = new Date(Date.UTC(y, m - 1, 1));
     const mEnd   = new Date(Date.UTC(y, m, 1));
     let w = startOfWeek(mStart, { weekStartsOn: 1 });
     while (w < mEnd) {
-      const hrs = await getWeekHrs(w);
-      weeklyTrend.push({ week: format(w, "dd MMM"), utilization: totalEmployees > 0 ? Math.round((hrs / (totalEmployees * 40)) * 100) : 0, totalHrs: hrs });
+      const [hrs, holidayDays] = await Promise.all([getWeekHrs(w), getWeekHolidayDays(w)]);
+      const capacity = totalEmployees * Math.max(0, 40 - holidayDays * 8);
+      weeklyTrend.push({ week: format(w, "dd MMM"), utilization: capacity > 0 ? Math.round((hrs / capacity) * 100) : 0, totalHrs: hrs, capacity });
       w = addDays(w, 7);
     }
   } else {
     for (let i = 5; i >= 0; i--) {
       const wStart = startOfWeek(subWeeks(anchor, i), { weekStartsOn: 1 });
-      const hrs = await getWeekHrs(wStart);
-      weeklyTrend.push({ week: format(wStart, "dd MMM"), utilization: totalEmployees > 0 ? Math.round((hrs / (totalEmployees * 40)) * 100) : 0, totalHrs: hrs });
+      const [hrs, holidayDays] = await Promise.all([getWeekHrs(wStart), getWeekHolidayDays(wStart)]);
+      const capacity = totalEmployees * Math.max(0, 40 - holidayDays * 8);
+      weeklyTrend.push({ week: format(wStart, "dd MMM"), utilization: capacity > 0 ? Math.round((hrs / capacity) * 100) : 0, totalHrs: hrs, capacity });
     }
   }
 

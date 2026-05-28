@@ -7,12 +7,14 @@ import { format } from "date-fns";
 // ──────────── Types ────────────
 interface Project {
   id: string; projectNumber: string; projectName: string; projectType: string;
-  isActive: boolean; managerId: string | null; startDate: string | null; endDate: string | null;
+  isActive: boolean; managerId: string | null; pdId: string | null;
+  startDate: string | null; endDate: string | null;
   manager: { id: string; name: string; employeeId: string } | null;
+  pd:      { id: string; name: string; employeeId: string } | null;
 }
 interface TaskCode { id: string; code: string; name: string; category: string; isActive: boolean; }
 interface Holiday  { id: string; date: string; name: string; type: string; }
-interface Employee { id: string; name: string; employeeId: string; }
+interface Employee { id: string; name: string; employeeId: string; role: string; }
 
 const TABS = ["📁 โครงการ", "✅ รหัสงาน", "📅 วันหยุด / ลา"] as const;
 
@@ -67,7 +69,7 @@ function ProjectsTab() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
 
-  const emptyForm = { projectNumber: "", projectName: "", projectType: "project", managerId: "", startDate: "", endDate: "" };
+  const emptyForm = { projectNumber: "", projectName: "", projectType: "project", managerId: "", pdId: "", startDate: "", endDate: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
@@ -80,6 +82,7 @@ function ProjectsTab() {
     const projData = await projRes.json();
     const empData  = await empRes.json();
     setProjects(projData.projects || []);
+    // All employees with PM/PD/admin roles are selectable for both manager and pd fields
     setManagers((empData.employees || []).filter((e: any) => ["pm","pd","admin"].includes(e.role)));
     setLoading(false);
   }, []);
@@ -93,6 +96,7 @@ function ProjectsTab() {
       projectName:   p.projectName,
       projectType:   p.projectType,
       managerId:     p.managerId || "",
+      pdId:          p.pdId      || "",
       startDate:     p.startDate ? p.startDate.slice(0, 10) : "",
       endDate:       p.endDate   ? p.endDate.slice(0, 10)   : "",
     });
@@ -160,10 +164,17 @@ function ProjectsTab() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Project Manager</label>
+              <label className="block text-xs text-gray-500 mb-1">Project Manager (PM)</label>
               <select className="ges-input" value={form.managerId} onChange={(e) => setForm({ ...form, managerId: e.target.value })}>
                 <option value="">— ไม่ระบุ —</option>
-                {managers.map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
+                {managers.filter((m) => ["pm","admin"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Project Director (PD)</label>
+              <select className="ges-input" value={form.pdId} onChange={(e) => setForm({ ...form, pdId: e.target.value })}>
+                <option value="">— ไม่ระบุ —</option>
+                {managers.filter((m) => ["pd","admin"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
               </select>
             </div>
             <div>
@@ -192,6 +203,7 @@ function ProjectsTab() {
                 <th className="text-left">ชื่อโครงการ</th>
                 <th>ประเภท</th>
                 <th>PM</th>
+                <th>PD</th>
                 <th>วันเริ่ม</th>
                 <th>วันสิ้นสุด</th>
                 <th>สถานะ</th>
@@ -200,13 +212,14 @@ function ProjectsTab() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
               ) : filtered.map((p) => (
                 <tr key={p.id} className={!p.isActive ? "opacity-50" : ""}>
                   <td className="font-mono text-xs font-semibold text-blue-900">{p.projectNumber}</td>
-                  <td className="font-medium max-w-[240px] truncate">{p.projectName}</td>
+                  <td className="font-medium max-w-[200px] truncate">{p.projectName}</td>
                   <td className="text-center text-xs capitalize">{p.projectType}</td>
                   <td className="text-xs text-center">{p.manager?.name || "–"}</td>
+                  <td className="text-xs text-center">{p.pd?.name || "–"}</td>
                   <td className="text-xs text-center">{p.startDate ? format(new Date(p.startDate), "dd MMM yy") : "–"}</td>
                   <td className="text-xs text-center">{p.endDate   ? format(new Date(p.endDate),   "dd MMM yy") : "–"}</td>
                   <td className="text-center">

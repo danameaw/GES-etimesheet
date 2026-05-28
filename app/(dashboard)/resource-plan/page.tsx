@@ -9,7 +9,9 @@ const MONTH_NAMES    = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","O
 interface Project {
   id: string; projectNumber: string; projectName: string;
   startDate: string | null; endDate: string | null;
+  planStatus: string;
   manager: { id: string; name: string; employeeId: string } | null;
+  pd:      { id: string; name: string; employeeId: string } | null;
 }
 interface PlanRow      { id: string; projectId: string; department: string; year: number; month: number; plannedHrs: number; planStatus: string; }
 interface ActualRow    { department: string; year: number; month: number; actualHrs: number; }
@@ -36,14 +38,14 @@ export default function ResourcePlanPage() {
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
   // ── State ──
-  const [projects, setProjects]         = useState<Project[]>([]);
-  const [departments, setDepartments]   = useState<string[]>([]);
+  const [projects, setProjects]               = useState<Project[]>([]);
+  const [departments, setDepartments]         = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
-  const [plans, setPlans]               = useState<PlanRow[]>([]);
-  const [actuals, setActuals]           = useState<ActualRow[]>([]);
-  const [saving, setSaving]             = useState<string | null>(null);
-  const [loading, setLoading]           = useState(false);
-  const [viewMode, setViewMode]         = useState<"employee" | "dept">("employee");
+  const [plans, setPlans]                     = useState<PlanRow[]>([]);
+  const [actuals, setActuals]                 = useState<ActualRow[]>([]);
+  const [saving, setSaving]                   = useState<string | null>(null);
+  const [loading, setLoading]                 = useState(false);
+  const [viewMode, setViewMode]               = useState<"employee" | "dept">("employee");
 
   // Employee view
   const [empPlans, setEmpPlans]                       = useState<EmpPlanRow[]>([]);
@@ -53,14 +55,14 @@ export default function ResourcePlanPage() {
   const [loadingEmp, setLoadingEmp]                   = useState(false);
 
   // User ID lookup
-  const [userIdInput, setUserIdInput]         = useState("");
-  const [lookupResult, setLookupResult]       = useState<Employee | null | "notfound">(null);
-  const [lookupLoading, setLookupLoading]     = useState(false);
+  const [userIdInput, setUserIdInput]     = useState("");
+  const [lookupResult, setLookupResult]   = useState<Employee | null | "notfound">(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
   const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Import
-  const [importMsg, setImportMsg]   = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [importing, startImport]    = useTransition();
+  const [importMsg, setImportMsg]    = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [importing, startImport]     = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load dept plan ──
@@ -105,7 +107,9 @@ export default function ResourcePlanPage() {
       })()
     : [];
 
-  const planStatus = plans.length > 0 ? plans[0].planStatus : "draft";
+  // Plan status is stored on the project itself
+  const planStatus = selectedProj?.planStatus || "draft";
+  const canEditPlan = planStatus === "draft";
 
   // ── User ID lookup with debounce ──
   function handleUserIdChange(val: string) {
@@ -128,7 +132,7 @@ export default function ResourcePlanPage() {
       setUserIdInput(""); setLookupResult(null); return;
     }
     setSaving("addEmp");
-    await fetch("/api/resource-plan-employee-monthly", {
+    const res = await fetch("/api/resource-plan-employee-monthly", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         projectId: selectedProject, employeeId: lookupResult.id,
@@ -137,8 +141,37 @@ export default function ResourcePlanPage() {
       }),
     });
     setSaving(null);
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.error || "Error");
+      return;
+    }
     setUserIdInput(""); setLookupResult(null);
     loadEmp(selectedProject);
+  }
+
+  // ── Plan actions ──
+  async function submitPlan() {
+    if (!selectedProject) return;
+    setSaving("submit");
+    await fetch("/api/resource-plan-monthly", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "submit", projectId: selectedProject }),
+    });
+    setSaving(null);
+    load(selectedProject);
+  }
+
+  async function requestRevision() {
+    if (!selectedProject) return;
+    if (!confirm("ส่งคำขอแก้ไขแผนไปให้ PD อนุมัติก่อน?")) return;
+    setSaving("revision");
+    await fetch("/api/resource-plan-monthly", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "revision_request", projectId: selectedProject }),
+    });
+    setSaving(null);
+    load(selectedProject);
   }
 
   // ── Employee plan helpers ──
@@ -151,16 +184,25 @@ export default function ResourcePlanPage() {
   async function saveEmpPlan(empId: string, year: number, month: number, hrs: number) {
     if (!selectedProject) return;
     setSaving(`emp|${empId}|${year}|${month}`);
-    await fetch("/api/resource-plan-employee-monthly", {
+    const res = await fetch("/api/resource-plan-employee-monthly", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId: selectedProject, employeeId: empId, year, month, plannedHrs: hrs }),
     });
     setSaving(null);
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.error || "Error");
+    }
     loadEmp(selectedProject);
   }
   async function removeEmployee(empId: string) {
     if (!selectedProject || !confirm("ลบพนักงานนี้ออกจากแผนทั้งหมด?")) return;
-    await fetch(`/api/resource-plan-employee-monthly?projectId=${selectedProject}&employeeId=${empId}`, { method: "DELETE" });
+    const res = await fetch(`/api/resource-plan-employee-monthly?projectId=${selectedProject}&employeeId=${empId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.error || "Error");
+      return;
+    }
     loadEmp(selectedProject);
   }
 
@@ -170,17 +212,6 @@ export default function ResourcePlanPage() {
   }
   function getActual(dept: string, year: number, month: number) {
     return actuals.find((a) => a.department === dept && a.year === year && a.month === month)?.actualHrs || 0;
-  }
-
-  async function submitPlan() {
-    if (!selectedProject) return;
-    setSaving("submit");
-    await fetch("/api/resource-plan-monthly", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "submit", projectId: selectedProject }),
-    });
-    setSaving(null);
-    load(selectedProject);
   }
 
   async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -204,12 +235,12 @@ export default function ResourcePlanPage() {
   }
 
   // ── Totals ──
-  const assignedEmps       = allEmployees.filter((e) => assignedEmployeeIds.includes(e.id));
+  const assignedEmps        = allEmployees.filter((e) => assignedEmployeeIds.includes(e.id));
   const empRowTotals        = assignedEmps.map((e) => months.reduce((s, m) => s + getEmpPlanned(e.id, m.year, m.month), 0));
   const empMonthTotals      = months.map((m) => assignedEmps.reduce((s, e) => s + getEmpPlanned(e.id, m.year, m.month), 0));
   const empGrandTotal       = empRowTotals.reduce((s, v) => s + v, 0);
   const empActualRowTotals  = assignedEmps.map((e) => months.reduce((s, m) => s + getEmpActual(e.id, m.year, m.month), 0));
-  const empActualMonthTotals= months.map((m) => assignedEmps.reduce((s, e) => s + getEmpActual(e.id, m.year, m.month), 0));
+  const empActualMonthTotals = months.map((m) => assignedEmps.reduce((s, e) => s + getEmpActual(e.id, m.year, m.month), 0));
   const empGrandActualTotal = empActualRowTotals.reduce((s, v) => s + v, 0);
 
   const deptTotals          = departments.map((d) => months.reduce((s, m) => s + getPlanned(d, m.year, m.month), 0));
@@ -249,7 +280,10 @@ export default function ResourcePlanPage() {
                 {projects.map((p) => (
                   <button key={p.id} onClick={() => setSelectedProject(p.id)}
                     className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors ${selectedProject === p.id ? "bg-blue-900 text-white" : "bg-gray-50 hover:bg-gray-100 text-gray-800"}`}>
-                    <p className={`font-mono text-xs font-semibold ${selectedProject === p.id ? "text-blue-200" : "text-blue-600"}`}>{p.projectNumber}</p>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className={`font-mono text-xs font-semibold ${selectedProject === p.id ? "text-blue-200" : "text-blue-600"}`}>{p.projectNumber}</span>
+                      <PlanStatusDot status={p.planStatus} />
+                    </div>
                     <p className="text-xs mt-0.5 leading-tight line-clamp-2">{p.projectName}</p>
                     {p.startDate && p.endDate && (
                       <p className={`text-xs mt-0.5 ${selectedProject === p.id ? "text-blue-300" : "text-gray-400"}`}>
@@ -291,6 +325,7 @@ export default function ResourcePlanPage() {
                       {" → "}
                       {selectedProj.endDate   ? new Date(selectedProj.endDate).toLocaleDateString("th-TH") : "–"}
                       {" · "}{months.length} เดือน
+                      {selectedProj.pd && <span className="ml-2">· PD: {selectedProj.pd.name}</span>}
                     </p>
                   </div>
                   <div className="flex gap-3 items-center flex-wrap">
@@ -305,25 +340,71 @@ export default function ResourcePlanPage() {
                     </div>
                     <div className="w-px h-8 bg-gray-200" />
                     <div className="flex gap-2 flex-wrap">
-                      <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
-                      <a href={`/api/resource-plan-employee-monthly/template?projectId=${selectedProject}`}
-                        className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
-                        📥 Excel Template
-                      </a>
-                      <button onClick={() => fileInputRef.current?.click()} disabled={importing}
-                        className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap border-green-300 text-green-700 hover:bg-green-50">
-                        {importing ? "กำลัง Import…" : "📤 Import Excel"}
-                      </button>
-                      {planStatus !== "approved" && (
-                        <button onClick={submitPlan} disabled={saving === "submit" || empGrandTotal === 0}
+                      {/* Excel template / import — only when editable */}
+                      {canEditPlan && (
+                        <>
+                          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
+                          <a href={`/api/resource-plan-employee-monthly/template?projectId=${selectedProject}`}
+                            className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+                            📥 Excel Template
+                          </a>
+                          <button onClick={() => fileInputRef.current?.click()} disabled={importing}
+                            className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap border-green-300 text-green-700 hover:bg-green-50">
+                            {importing ? "กำลัง Import…" : "📤 Import Excel"}
+                          </button>
+                        </>
+                      )}
+
+                      {/* Submit Plan button — only when draft */}
+                      {canEditPlan && (
+                        <button onClick={submitPlan}
+                          disabled={saving === "submit" || empGrandTotal === 0}
                           className="ges-btn-primary text-xs px-3 py-1.5">
-                          {saving === "submit" ? "กำลังส่ง…" : planStatus === "submitted" ? "✓ ส่งแล้ว" : "📤 Submit Plan"}
+                          {saving === "submit" ? "กำลังส่ง…" : "📤 Submit Plan"}
                         </button>
+                      )}
+
+                      {/* Request for Revise Plan — when submitted or approved */}
+                      {(planStatus === "submitted" || planStatus === "approved") && (
+                        <button onClick={requestRevision}
+                          disabled={saving === "revision"}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 whitespace-nowrap font-medium disabled:opacity-50">
+                          {saving === "revision" ? "กำลังส่ง…" : "🔄 Request for Revise Plan"}
+                        </button>
+                      )}
+
+                      {/* Revision pending indicator */}
+                      {planStatus === "revision_requested" && (
+                        <span className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 bg-amber-50 whitespace-nowrap">
+                          ⏳ รอ PD อนุมัติการแก้ไข
+                        </span>
                       )}
                     </div>
                   </div>
                 </div>
               </div>
+
+              {/* Plan lock notice */}
+              {!canEditPlan && planStatus !== "revision_requested" && (
+                <div className={`px-4 py-3 rounded-lg text-sm flex items-center gap-2 ${
+                  planStatus === "approved"
+                    ? "bg-green-50 border border-green-200 text-green-800"
+                    : "bg-amber-50 border border-amber-200 text-amber-800"
+                }`}>
+                  <span>🔒</span>
+                  <span>
+                    {planStatus === "approved"
+                      ? "แผนได้รับการอนุมัติแล้ว — ไม่สามารถแก้ไขได้ กด \"Request for Revise Plan\" เพื่อขอแก้ไข"
+                      : "แผนถูกส่งแล้ว — รอ PD อนุมัติ หรือกด \"Request for Revise Plan\" เพื่อขอแก้ไข"}
+                  </span>
+                </div>
+              )}
+              {planStatus === "revision_requested" && (
+                <div className="px-4 py-3 rounded-lg text-sm flex items-center gap-2 bg-blue-50 border border-blue-200 text-blue-800">
+                  <span>⏳</span>
+                  <span>อยู่ระหว่างรอ PD อนุมัติคำขอแก้ไข — ยังไม่สามารถแก้ไขแผนได้ในขณะนี้</span>
+                </div>
+              )}
 
               {/* Import message */}
               {importMsg && (
@@ -350,54 +431,52 @@ export default function ResourcePlanPage() {
               {/* ── EMPLOYEE VIEW ── */}
               {viewMode === "employee" && (
                 <div className="ges-card overflow-x-auto">
-                  {/* Add Employee by User ID */}
-                  <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-                    <p className="text-xs font-semibold text-gray-600 mb-2">เพิ่มพนักงาน</p>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500 whitespace-nowrap">User ID:</span>
-                        <input
-                          type="text"
-                          placeholder="เช่น GES-001"
-                          value={userIdInput}
-                          onChange={(e) => handleUserIdChange(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") confirmAddEmployee(); }}
-                          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-36 focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono uppercase"
-                        />
-                      </div>
-
-                      {/* Lookup result */}
-                      {lookupLoading && (
-                        <span className="text-xs text-gray-400 animate-pulse">กำลังค้นหา…</span>
-                      )}
-                      {!lookupLoading && lookupResult && lookupResult !== "notfound" && (
+                  {/* Add Employee by User ID — only when editable */}
+                  {canEditPlan && (
+                    <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
+                      <p className="text-xs font-semibold text-gray-600 mb-2">เพิ่มพนักงาน</p>
+                      <div className="flex items-center gap-3 flex-wrap">
                         <div className="flex items-center gap-2">
-                          {assignedEmployeeIds.includes(lookupResult.id) ? (
-                            <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-                              ⚠️ {lookupResult.name} อยู่ในแผนแล้ว
-                            </span>
-                          ) : (
-                            <>
-                              <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                                ✓ <strong>{lookupResult.name}</strong>
-                                <span className="text-green-500">·</span>
-                                {lookupResult.department}
-                              </span>
-                              <button onClick={confirmAddEmployee} disabled={saving === "addEmp"}
-                                className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
-                                {saving === "addEmp" ? "กำลังเพิ่ม…" : "+ เพิ่มเข้าแผน"}
-                              </button>
-                            </>
-                          )}
+                          <span className="text-xs text-gray-500 whitespace-nowrap">User ID:</span>
+                          <input
+                            type="text"
+                            placeholder="เช่น GES-001"
+                            value={userIdInput}
+                            onChange={(e) => handleUserIdChange(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") confirmAddEmployee(); }}
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-36 focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono uppercase"
+                          />
                         </div>
-                      )}
-                      {!lookupLoading && lookupResult === "notfound" && userIdInput.trim() && (
-                        <span className="text-xs text-red-500 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
-                          ❌ ไม่พบรหัส &ldquo;{userIdInput.trim()}&rdquo;
-                        </span>
-                      )}
+                        {lookupLoading && <span className="text-xs text-gray-400 animate-pulse">กำลังค้นหา…</span>}
+                        {!lookupLoading && lookupResult && lookupResult !== "notfound" && (
+                          <div className="flex items-center gap-2">
+                            {assignedEmployeeIds.includes(lookupResult.id) ? (
+                              <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                                ⚠️ {lookupResult.name} อยู่ในแผนแล้ว
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                                  ✓ <strong>{lookupResult.name}</strong>
+                                  <span className="text-green-500">·</span>
+                                  {lookupResult.department}
+                                </span>
+                                <button onClick={confirmAddEmployee} disabled={saving === "addEmp"}
+                                  className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
+                                  {saving === "addEmp" ? "กำลังเพิ่ม…" : "+ เพิ่มเข้าแผน"}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {!lookupLoading && lookupResult === "notfound" && userIdInput.trim() && (
+                          <span className="text-xs text-red-500 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
+                            ❌ ไม่พบรหัส &ldquo;{userIdInput.trim()}&rdquo;
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Employee table */}
                   {loadingEmp ? (
@@ -406,7 +485,7 @@ export default function ResourcePlanPage() {
                     <div className="p-10 text-center text-gray-400">
                       <p className="text-3xl mb-2">👤</p>
                       <p className="text-sm font-medium">ยังไม่มีพนักงานในแผน</p>
-                      <p className="text-xs mt-1">กรอก User ID ด้านบนเพื่อเพิ่มพนักงาน</p>
+                      <p className="text-xs mt-1">{canEditPlan ? "กรอก User ID ด้านบนเพื่อเพิ่มพนักงาน" : "ยังไม่มีข้อมูลพนักงาน"}</p>
                     </div>
                   ) : (
                     <table className="text-sm w-full">
@@ -421,7 +500,7 @@ export default function ResourcePlanPage() {
                             </th>
                           ))}
                           <th className="px-3 py-2.5 text-center min-w-[65px] font-semibold text-gray-700 border-l border-gray-200">รวม</th>
-                          <th className="w-8" />
+                          {canEditPlan && <th className="w-8" />}
                         </tr>
                       </thead>
                       <tbody>
@@ -440,15 +519,19 @@ export default function ResourcePlanPage() {
                               const actual = getEmpActual(emp.id, m.year, m.month);
                               return (
                                 <td key={`${m.year}-${m.month}`} className="px-1 py-1 text-center">
-                                  <input type="number" min="0" step="8"
-                                    defaultValue={plan}
-                                    key={`${emp.id}-${m.year}-${m.month}-${plan}`}
-                                    onBlur={(e) => { const v = Number(e.target.value); if (v !== plan) saveEmpPlan(emp.id, m.year, m.month, v); }}
-                                    className={`w-16 text-center border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
-                                      saving === key ? "border-blue-300 bg-blue-50" :
-                                      plan > 0 ? "border-blue-200 text-blue-900 font-semibold" : "border-gray-200 text-gray-400"
-                                    }`}
-                                  />
+                                  {canEditPlan ? (
+                                    <input type="number" min="0" step="8"
+                                      defaultValue={plan}
+                                      key={`${emp.id}-${m.year}-${m.month}-${plan}`}
+                                      onBlur={(e) => { const v = Number(e.target.value); if (v !== plan) saveEmpPlan(emp.id, m.year, m.month, v); }}
+                                      className={`w-16 text-center border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                        saving === key ? "border-blue-300 bg-blue-50" :
+                                        plan > 0 ? "border-blue-200 text-blue-900 font-semibold" : "border-gray-200 text-gray-400"
+                                      }`}
+                                    />
+                                  ) : (
+                                    <span className={plan > 0 ? "font-semibold text-blue-900 text-xs" : "text-gray-300 text-xs"}>{plan || "–"}</span>
+                                  )}
                                   {actual > 0 && (
                                     <div className={`text-xs mt-0.5 ${actual > plan && plan > 0 ? "text-red-500" : "text-green-600"}`}>{actual}h จริง</div>
                                   )}
@@ -459,9 +542,11 @@ export default function ResourcePlanPage() {
                               <span className={`font-semibold text-sm ${empRowTotals[ei] > 0 ? "text-blue-900" : "text-gray-300"}`}>{empRowTotals[ei] || "–"}</span>
                               {empActualRowTotals[ei] > 0 && <div className="text-xs text-green-600">{empActualRowTotals[ei]}</div>}
                             </td>
-                            <td className="px-2 py-2 text-center">
-                              <button onClick={() => removeEmployee(emp.id)} className="text-gray-300 hover:text-red-500 transition-colors" title="ลบออกจากแผน">✕</button>
-                            </td>
+                            {canEditPlan && (
+                              <td className="px-2 py-2 text-center">
+                                <button onClick={() => removeEmployee(emp.id)} className="text-gray-300 hover:text-red-500 transition-colors" title="ลบออกจากแผน">✕</button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                         <tr className="border-t-2 border-gray-300 bg-blue-50">
@@ -476,7 +561,7 @@ export default function ResourcePlanPage() {
                             <span className="font-bold text-blue-900 text-sm">{empGrandTotal || "–"}</span>
                             {empGrandActualTotal > 0 && <div className="text-xs text-green-600">{empGrandActualTotal}</div>}
                           </td>
-                          <td />
+                          {canEditPlan && <td />}
                         </tr>
                       </tbody>
                     </table>
@@ -594,10 +679,21 @@ export default function ResourcePlanPage() {
 
 function PlanStatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    draft:     { label: "Draft",            cls: "bg-gray-100 text-gray-600" },
-    submitted: { label: "📤 รอ Approve",     cls: "bg-amber-100 text-amber-800" },
-    approved:  { label: "✓ Approved by PD", cls: "bg-green-100 text-green-800" },
+    draft:              { label: "✏️ Draft",              cls: "bg-gray-100 text-gray-600" },
+    submitted:          { label: "📤 รอ PD อนุมัติ",       cls: "bg-amber-100 text-amber-800" },
+    revision_requested: { label: "🔄 รอ PD อนุมัติการแก้ไข", cls: "bg-blue-100 text-blue-800" },
+    approved:           { label: "✓ Approved by PD",     cls: "bg-green-100 text-green-800" },
   };
   const s = map[status] ?? map.draft;
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
+}
+
+function PlanStatusDot({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    draft:              "text-gray-400",
+    submitted:          "text-amber-500",
+    revision_requested: "text-blue-500",
+    approved:           "text-green-500",
+  };
+  return <span className={`text-xs ${map[status] || "text-gray-400"}`}>●</span>;
 }
