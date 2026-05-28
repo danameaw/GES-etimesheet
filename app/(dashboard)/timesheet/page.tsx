@@ -106,6 +106,7 @@ export default function TimesheetPage() {
   // Fetch timesheet + holidays for current week
   const loadTimesheet = useCallback(async () => {
     const weekStr = format(currentWeek, "yyyy-MM-dd");
+    setMessage(null); // Clear any stale messages when loading a new week
     const res = await fetch(`/api/timesheets?week=${weekStr}`);
     const data = await res.json();
 

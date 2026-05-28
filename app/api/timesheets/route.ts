@@ -40,10 +40,13 @@ export async function GET(req: NextRequest) {
     ? parseWeekStart(weekParam)
     : startOfWeek(new Date(), { weekStartsOn: 1 });
 
-  const whereClause: any = { weekStart: weekRange(weekStart) };
-  if (role !== "admin") {
-    whereClause.employeeId = employeeDbId;
-  } else {
+  // Always filter by logged-in user's own ID first.
+  // Admin can optionally override with ?employeeId= to view another employee's timesheet.
+  const whereClause: any = {
+    weekStart:  weekRange(weekStart),
+    employeeId: employeeDbId,
+  };
+  if (role === "admin") {
     const targetEmpId = searchParams.get("employeeId");
     if (targetEmpId) whereClause.employeeId = targetEmpId;
   }
