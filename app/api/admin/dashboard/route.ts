@@ -4,8 +4,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, subWeeks, format, addDays } from "date-fns";
 
-// ±13h tolerance for backward-compat with old UTC+7 stored dates
 const MS_13H = 13 * 60 * 60 * 1000;
+const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
 function weekRange(wStart: Date) {
   return { gte: new Date(wStart.getTime() - MS_13H), lt: new Date(wStart.getTime() + MS_13H) };
 }
@@ -13,212 +14,195 @@ function weekRange(wStart: Date) {
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // Dashboard is PD-only
-  if ((session.user as any).role !== "pd") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const role = (session.user as any).role;
+  if (!["pd", "admin"].includes(role))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const weekParam = searchParams.get("week");   // yyyy-MM-dd  (specific week)
-  const monthParam = searchParams.get("month"); // yyyy-MM     (full month)
-  const mode = monthParam ? "month" : "week";
+  const weekParam  = searchParams.get("week");
+  const monthParam = searchParams.get("month");
+  const projectId  = searchParams.get("projectId") || "";
+  const deptFilter = searchParams.get("dept") || "";
+  const mode       = monthParam ? "month" : "week";
 
-  // Build timesheet date filter
-  let timesheetDateFilter: any = {};
+  // ── All active projects for selector ──
+  const allProjects = await prisma.project.findMany({
+    where: { isActive: true },
+    select: { id: true, projectNumber: true, projectName: true },
+    orderBy: { projectNumber: "asc" },
+  });
+
+  // ── Time filter ──
+  let dateFilter: any = {};
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
-    const mStart = new Date(Date.UTC(y, m - 1, 1));
-    const mEnd   = new Date(Date.UTC(y, m,     1)); // exclusive start of next month
-    // Cast a wide net: any weekStart that could belong to this month (±13h on both ends)
-    timesheetDateFilter = { gte: new Date(mStart.getTime() - MS_13H), lt: new Date(mEnd.getTime() + MS_13H) };
+    const s = new Date(Date.UTC(y, m - 1, 1));
+    const e = new Date(Date.UTC(y, m, 1));
+    dateFilter = { gte: new Date(s.getTime() - MS_13H), lt: new Date(e.getTime() + MS_13H) };
   } else if (weekParam) {
-    const wStart = new Date(weekParam + "T00:00:00.000Z");
-    timesheetDateFilter = weekRange(wStart);
-  }
-  // No filter = all-time (fallback)
-
-  const whereClause: any = { status: { in: ["submitted", "approved"] } };
-  if (Object.keys(timesheetDateFilter).length > 0) {
-    whereClause.weekStart = timesheetDateFilter;
+    dateFilter = weekRange(new Date(weekParam + "T00:00:00.000Z"));
   }
 
-  const allTimesheets = await prisma.timesheet.findMany({
-    where: whereClause,
-    include: { entries: { include: { project: true, taskCode: true } }, employee: true },
-    orderBy: { updatedAt: "desc" },
+  // ── Timesheets ──
+  const tsWhere: any = { status: { in: ["submitted", "approved"] } };
+  if (Object.keys(dateFilter).length) tsWhere.weekStart = dateFilter;
+  if (projectId) tsWhere.entries = { some: { projectId } };
+
+  const allTS = await prisma.timesheet.findMany({
+    where: tsWhere,
+    include: {
+      entries: {
+        where: projectId ? { projectId } : undefined,
+        include: { project: true, taskCode: true },
+      },
+      employee: true,
+    },
   });
 
-  // Deduplicate: keep one timesheet per (employeeId + weekStart-rounded)
+  // Deduplicate
   const seen = new Set<string>();
-  const dedupedTimesheets = allTimesheets.filter((ts) => {
-    const dayKey = new Date(Math.round(ts.weekStart.getTime() / 86400000) * 86400000).toISOString().slice(0, 10);
-    const key = `${ts.employeeId}-${dayKey}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const deduped = allTS.filter((ts) => {
+    const k = `${ts.employeeId}-${new Date(Math.round(ts.weekStart.getTime() / 86400000) * 86400000).toISOString().slice(0, 10)}`;
+    if (seen.has(k)) return false; seen.add(k); return true;
   });
 
-  const entries = dedupedTimesheets.flatMap((ts) =>
-    ts.entries.map((e) => ({ ...e, timesheet: ts as any }))
+  const entries = deduped.flatMap((ts) =>
+    ts.entries.filter((e) => e.totalHrs > 0).map((e) => ({ ...e, ts }))
   );
 
-  // Hours by project × department (stacked bar) — top 10 projects
-  const projDeptMap = new Map<string, { name: string; id: string; total: number; byDept: Record<string, number> }>();
-  for (const e of entries) {
-    const key  = e.project.projectNumber;
-    const dept = e.timesheet.employee.department;
-    if (!projDeptMap.has(key)) {
-      projDeptMap.set(key, { name: e.project.projectName, id: e.projectId, total: 0, byDept: {} });
-    }
-    const rec = projDeptMap.get(key)!;
-    rec.total += e.totalHrs;
-    rec.byDept[dept] = (rec.byDept[dept] || 0) + e.totalHrs;
-  }
-  const top10ProjKeys = Array.from(projDeptMap.entries())
-    .sort((a, b) => b[1].total - a[1].total)
-    .slice(0, 10)
-    .map(([k]) => k);
+  // ── 1. Plan vs Actual ──
+  const actualByProj = new Map<string, number>();
+  for (const e of entries) actualByProj.set(e.projectId, (actualByProj.get(e.projectId) || 0) + e.totalHrs);
 
-  const projectHours = top10ProjKeys.map((num) => {
-    const v = projDeptMap.get(num)!;
-    return { projectNumber: num, projectName: v.name, projectId: v.id, hours: v.total };
+  const planWhere: any = projectId ? { projectId } : {};
+  if (mode === "month" && monthParam) {
+    const [y, m] = monthParam.split("-").map(Number);
+    Object.assign(planWhere, { year: y, month: m });
+  }
+  const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
+    where: planWhere,
+    include: { project: { select: { id: true, projectNumber: true, projectName: true } } },
   });
 
-  // All unique departments in data (for stacked legend)
-  const allDepts = Array.from(
-    new Set(entries.map((e) => e.timesheet.employee.department))
-  ).sort();
-
-  // Stacked data: per project, hours by each dept
-  const projectDeptHours = top10ProjKeys.map((num) => {
-    const v = projDeptMap.get(num)!;
-    return { projectNumber: num, projectName: v.name, projectId: v.id, byDept: v.byDept };
-  });
-
-  // Hours by task category
-  const categoryMap = new Map<string, number>();
-  for (const e of entries) {
-    const cat = e.taskCode.category;
-    categoryMap.set(cat, (categoryMap.get(cat) || 0) + e.totalHrs);
+  const planByProj = new Map<string, { num: string; name: string; planned: number }>();
+  for (const p of empPlans) {
+    const x = planByProj.get(p.projectId);
+    if (x) x.planned += p.plannedHrs;
+    else planByProj.set(p.projectId, { num: p.project.projectNumber, name: p.project.projectName, planned: p.plannedHrs });
   }
-  const categoryHours = Array.from(categoryMap.entries())
-    .map(([category, hours]) => ({ category, hours }))
-    .sort((a, b) => b.hours - a.hours);
 
-  // Workload by department (kept for backward compat)
-  const deptMap = new Map<string, number>();
-  for (const e of entries) {
-    const dept = e.timesheet.employee.department;
-    deptMap.set(dept, (deptMap.get(dept) || 0) + e.totalHrs);
-  }
-  const deptHours = Array.from(deptMap.entries())
-    .map(([department, hours]) => ({ department, hours }))
-    .sort((a, b) => b.hours - a.hours);
+  const pvaPids = new Set([...Array.from(planByProj.keys()), ...Array.from(actualByProj.keys())]);
+  const planVsActual = Array.from(pvaPids).map((pid) => {
+    const pd = planByProj.get(pid);
+    const pr = allProjects.find((p) => p.id === pid);
+    return { projectId: pid, projectNumber: pd?.num || pr?.projectNumber || "?", projectName: pd?.name || pr?.projectName || "?", planned: pd?.planned || 0, actual: actualByProj.get(pid) || 0 };
+  }).filter((x) => x.planned > 0 || x.actual > 0).sort((a, b) => b.planned - a.planned).slice(0, 10);
 
-  // Top 8 employees by hours
-  const empHoursMap = new Map<string, { name: string; hours: number }>();
-  for (const e of entries) {
-    const emp = e.timesheet.employee;
-    const existing = empHoursMap.get(emp.id);
-    if (existing) existing.hours += e.totalHrs;
-    else empHoursMap.set(emp.id, { name: emp.name, hours: e.totalHrs });
-  }
-  const topEmployees = Array.from(empHoursMap.values())
-    .sort((a, b) => b.hours - a.hours)
-    .slice(0, 8);
+  // ── 2. Task Breakdown ──
+  const catMap = new Map<string, number>();
+  for (const e of entries) catMap.set(e.taskCode.category, (catMap.get(e.taskCode.category) || 0) + e.totalHrs);
+  const taskBreakdown = Array.from(catMap.entries()).map(([category, hours]) => ({ category, hours })).sort((a, b) => b.hours - a.hours);
 
-  // Summary stats for the selected period
-  const totalHours = entries.reduce((sum, e) => sum + e.totalHrs, 0);
-  const submittedCount = dedupedTimesheets.length;
+  // ── 3. Utilization Trend (6 weeks) ──
   const totalEmployees = await prisma.employee.count({ where: { isActive: true } });
-
-  // Weekly utilization trend:
-  //   - week mode  → last 6 weeks ending at selected week
-  //   - month mode → each week in selected month
   const weeklyTrend: { week: string; utilization: number; totalHrs: number }[] = [];
+  const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
+
+  async function getWeekHrs(wStart: Date) {
+    const wTs = await prisma.timesheet.findMany({
+      where: { weekStart: weekRange(wStart), status: { in: ["submitted","approved"] }, ...(projectId ? { entries: { some: { projectId } } } : {}) },
+      include: { entries: projectId ? { where: { projectId } } : true },
+    });
+    return wTs.reduce((s, ts) => s + (ts.entries as any[]).reduce((ss: number, e: any) => ss + e.totalHrs, 0), 0);
+  }
 
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
     const mStart = new Date(Date.UTC(y, m - 1, 1));
-    const mEnd   = new Date(Date.UTC(y, m,     1));
-    // All Monday-starts that overlap this month
-    const firstMonday = startOfWeek(mStart, { weekStartsOn: 1 });
-    const weeks: Date[] = [];
-    let w = firstMonday;
+    const mEnd   = new Date(Date.UTC(y, m, 1));
+    let w = startOfWeek(mStart, { weekStartsOn: 1 });
     while (w < mEnd) {
-      weeks.push(w);
+      const hrs = await getWeekHrs(w);
+      weeklyTrend.push({ week: format(w, "dd MMM"), utilization: totalEmployees > 0 ? Math.round((hrs / (totalEmployees * 40)) * 100) : 0, totalHrs: hrs });
       w = addDays(w, 7);
     }
-    for (const wStart of weeks) {
-      const weekTs = await prisma.timesheet.findMany({
-        where: { weekStart: weekRange(wStart), status: { in: ["submitted", "approved"] } },
-        include: { entries: true },
-      });
-      const hrs = weekTs.reduce((sum, ts) => sum + ts.entries.reduce((s, e) => s + e.totalHrs, 0), 0);
-      const expectedHrs = totalEmployees * 40;
-      weeklyTrend.push({
-        week: format(wStart, "dd MMM"),
-        utilization: expectedHrs > 0 ? Math.round((hrs / expectedHrs) * 100) : 0,
-        totalHrs: hrs,
-      });
-    }
   } else {
-    // Last 6 weeks anchored at selected week (or today)
-    const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
     for (let i = 5; i >= 0; i--) {
       const wStart = startOfWeek(subWeeks(anchor, i), { weekStartsOn: 1 });
-      const weekTs = await prisma.timesheet.findMany({
-        where: { weekStart: weekRange(wStart), status: { in: ["submitted", "approved"] } },
-        include: { entries: true },
-      });
-      const hrs = weekTs.reduce((sum, ts) => sum + ts.entries.reduce((s, e) => s + e.totalHrs, 0), 0);
-      const expectedHrs = totalEmployees * 40;
-      weeklyTrend.push({
-        week: format(wStart, "dd MMM"),
-        utilization: expectedHrs > 0 ? Math.round((hrs / expectedHrs) * 100) : 0,
-        totalHrs: hrs,
-      });
+      const hrs = await getWeekHrs(wStart);
+      weeklyTrend.push({ week: format(wStart, "dd MMM"), utilization: totalEmployees > 0 ? Math.round((hrs / (totalEmployees * 40)) * 100) : 0, totalHrs: hrs });
     }
   }
 
-  // Plan vs Actual per project
-  const resourcePlans = await prisma.resourcePlan.findMany({
-    include: { project: true },
+  // ── 4. Top Employees ──
+  const empMap = new Map<string, { name: string; hours: number; department: string }>();
+  for (const e of entries) {
+    const emp = e.ts.employee;
+    if (deptFilter && emp.department !== deptFilter) continue;
+    const x = empMap.get(emp.id);
+    if (x) x.hours += e.totalHrs;
+    else empMap.set(emp.id, { name: emp.name, hours: e.totalHrs, department: emp.department });
+  }
+  const topEmployees = Array.from(empMap.values()).sort((a, b) => b.hours - a.hours).slice(0, 10);
+  const allDepts = Array.from(new Set(deduped.map((ts) => ts.employee.department))).sort();
+
+  // ── 5. Plan vs Actual Matrix (last 6 months) ──
+  const now2 = new Date();
+  const matMonths = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth() - (5 - i), 1));
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, label: `${MONTH_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}` };
   });
 
-  const actualByProject = new Map<string, number>();
-  for (const e of entries) {
-    const key = e.project.projectNumber;
-    actualByProject.set(key, (actualByProject.get(key) || 0) + e.totalHrs);
+  const matProjIds = projectId ? [projectId] : allProjects.slice(0, 12).map((p) => p.id);
+  const [matPlans, matActuals] = await Promise.all([
+    prisma.resourcePlanEmployeeMonthly.findMany({
+      where: { projectId: { in: matProjIds }, OR: matMonths.map((m) => ({ year: m.year, month: m.month })) },
+      select: { projectId: true, year: true, month: true, plannedHrs: true },
+    }),
+    prisma.timesheetEntry.findMany({
+      where: { projectId: { in: matProjIds } },
+      include: { timesheet: { select: { weekStart: true } } },
+    }),
+  ]);
+
+  const matPlanMap = new Map<string, number>();
+  for (const p of matPlans) {
+    const k = `${p.projectId}|${p.year}|${p.month}`;
+    matPlanMap.set(k, (matPlanMap.get(k) || 0) + p.plannedHrs);
+  }
+  const matActualMap = new Map<string, number>();
+  for (const e of matActuals) {
+    const d = new Date(e.timesheet.weekStart);
+    const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1;
+    if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
+    const k = `${e.projectId}|${y}|${m}`;
+    matActualMap.set(k, (matActualMap.get(k) || 0) + e.totalHrs);
   }
 
-  const planMap = new Map<string, { projectName: string; planned: number }>();
-  for (const rp of resourcePlans) {
-    const key = rp.project.projectNumber;
-    if (!planMap.has(key)) {
-      planMap.set(key, { projectName: rp.project.projectName, planned: 0 });
-    }
-    planMap.get(key)!.planned += rp.plannedHrs;
-  }
+  const planActualMatrix = matProjIds.map((pid) => {
+    const proj = allProjects.find((p) => p.id === pid);
+    const months = matMonths.map((m) => ({
+      year: m.year, month: m.month, label: m.label,
+      planned: matPlanMap.get(`${pid}|${m.year}|${m.month}`) || 0,
+      actual:  matActualMap.get(`${pid}|${m.year}|${m.month}`) || 0,
+    }));
+    const totalPlanned = months.reduce((s, m) => s + m.planned, 0);
+    const totalActual  = months.reduce((s, m) => s + m.actual, 0);
+    return { projectId: pid, projectNumber: proj?.projectNumber || "?", projectName: proj?.projectName || "?", months, totalPlanned, totalActual };
+  }).filter((p) => p.totalPlanned > 0 || p.totalActual > 0);
 
-  const planVsActual = Array.from(planMap.entries())
-    .map(([projectNumber, v]) => ({
-      projectNumber,
-      projectName: v.projectName,
-      planned: v.planned,
-      actual: actualByProject.get(projectNumber) || 0,
-    }))
-    .filter((p) => p.planned > 0)
-    .sort((a, b) => b.planned - a.planned)
-    .slice(0, 10);
+  const totalHours   = entries.reduce((s, e) => s + e.totalHrs, 0);
+  const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
 
   return NextResponse.json({
-    projectHours,
-    projectDeptHours,
-    allDepts,
-    categoryHours,
-    deptHours,
-    topEmployees,
-    weeklyTrend,
+    allProjects,
     planVsActual,
-    summary: { totalHours, submittedCount, totalEmployees, mode },
+    taskBreakdown,
+    weeklyTrend,
+    topEmployees,
+    allDepts,
+    planActualMatrix,
+    matrixMonths: matMonths,
+    summary: { totalHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode },
   });
 }

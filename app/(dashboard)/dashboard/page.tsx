@@ -4,455 +4,369 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { format, addWeeks, subWeeks, startOfWeek, addMonths, subMonths, startOfMonth } from "date-fns";
 import {
-  Chart as ChartJS,
-  CategoryScale, LinearScale, BarElement, ArcElement,
-  PointElement, LineElement, Title, Tooltip, Legend,
-  BarController, LineController,
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement,
+  PointElement, LineElement, Title, Tooltip, Legend, BarController, LineController,
 } from "chart.js";
 import { Bar, Doughnut, Chart } from "react-chartjs-2";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend, BarController, LineController);
 
-interface DashboardData {
-  projectHours:     { projectNumber: string; projectName: string; projectId: string; hours: number }[];
-  projectDeptHours: { projectNumber: string; projectName: string; projectId: string; byDept: Record<string, number> }[];
+const DEPT_COLORS = ["#1e3a5f","#2563eb","#0891b2","#059669","#d97706","#dc2626","#7c3aed","#db2777","#65a30d","#ea580c"];
+const CAT_COLORS  = ["#2563eb","#0891b2","#059669","#d97706","#7c3aed","#dc2626","#db2777","#65a30d"];
+
+interface Project        { id: string; projectNumber: string; projectName: string; }
+interface PlanVsActual   { projectId: string; projectNumber: string; projectName: string; planned: number; actual: number; }
+interface TaskRow         { category: string; hours: number; }
+interface TrendRow        { week: string; utilization: number; totalHrs: number; }
+interface EmpRow          { name: string; hours: number; department: string; }
+interface MatrixProject   { projectId: string; projectNumber: string; projectName: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; }
+interface MatrixMonth     { year: number; month: number; label: string; }
+
+interface DashData {
+  allProjects:      Project[];
+  planVsActual:     PlanVsActual[];
+  taskBreakdown:    TaskRow[];
+  weeklyTrend:      TrendRow[];
+  topEmployees:     EmpRow[];
   allDepts:         string[];
-  categoryHours:    { category: string; hours: number }[];
-  deptHours:        { department: string; hours: number }[];
-  topEmployees:     { name: string; hours: number }[];
-  weeklyTrend:      { week: string; utilization: number; totalHrs: number }[];
-  planVsActual:     { projectNumber: string; projectName: string; projectId: string; planned: number; actual: number }[];
-  summary:          { totalHours: number; submittedCount: number; totalEmployees: number; mode: string };
+  planActualMatrix: MatrixProject[];
+  matrixMonths:     MatrixMonth[];
+  summary:          { totalHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string };
 }
-
-interface DrillDownData {
-  project:      { id: string; projectNumber: string; projectName: string };
-  employees:    { name: string; employeeId: string; department: string; actualHrs: number }[];
-  planByDept:   Record<string, number>;
-  actualByDept: Record<string, number>;
-}
-
-const DEPT_COLORS = [
-  "#1e3a5f","#2563eb","#0891b2","#059669","#d97706",
-  "#dc2626","#7c3aed","#db2777","#65a30d","#ea580c",
-];
-
-const MONTH_NAMES_TH = [
-  "มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
-  "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม",
-];
 
 export default function DashboardPage() {
   const { data: session } = useSession();
   const router = useRouter();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<"week"|"month">("week");
-  const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
-  const [drillDown, setDrillDown] = useState<DrillDownData | null>(null);
-  const [drillLoading, setDrillLoading] = useState(false);
-
   const role = (session?.user as any)?.role;
-  const canView = role === "pd";
+  const canAccess = ["pd","admin"].includes(role);
+  useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
-  useEffect(() => {
-    if (session && !canView) router.push("/timesheet");
-  }, [session, canView, router]);
+  const [data, setData]           = useState<DashData | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [mode, setMode]           = useState<"week"|"month">("week");
+  const [selectedWeek, setSelectedWeek]   = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
+  const [selectedProject, setSelectedProject] = useState<string>("");
+  const [deptFilter, setDeptFilter] = useState<string>("");
 
-  const fetchData = useCallback(() => {
+  const weekLabel  = `สัปดาห์ ${format(selectedWeek, "dd MMM yyyy")}`;
+  const monthLabel = format(selectedMonth, "MMM yyyy");
+
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const url = mode === "week"
-      ? `/api/admin/dashboard?week=${format(currentWeek, "yyyy-MM-dd")}`
-      : `/api/admin/dashboard?month=${format(currentMonth, "yyyy-MM")}`;
-    fetch(url).then((r) => r.json()).then((d) => { setData(d); setLoading(false); }).catch(() => setLoading(false));
-  }, [mode, currentWeek, currentMonth]);
+    const params = new URLSearchParams();
+    if (mode === "week")  params.set("week",  format(selectedWeek,  "yyyy-MM-dd"));
+    if (mode === "month") params.set("month", format(selectedMonth, "yyyy-MM"));
+    if (selectedProject) params.set("projectId", selectedProject);
+    if (deptFilter)      params.set("dept", deptFilter);
+    const res = await fetch(`/api/admin/dashboard?${params}`);
+    if (res.ok) setData(await res.json());
+    setLoading(false);
+  }, [mode, selectedWeek, selectedMonth, selectedProject, deptFilter]);
 
-  useEffect(() => { if (canView) fetchData(); }, [canView, fetchData]);
+  useEffect(() => { if (canAccess) fetchData(); }, [fetchData, canAccess]);
 
-  const openDrillDown = async (projectId: string) => {
-    setDrillLoading(true);
-    const param = mode === "week"
-      ? `week=${format(currentWeek, "yyyy-MM-dd")}`
-      : `month=${format(currentMonth, "yyyy-MM")}`;
-    const res = await fetch(`/api/admin/dashboard/project-detail?projectId=${projectId}&${param}`);
-    const d = await res.json();
-    setDrillDown(d);
-    setDrillLoading(false);
-  };
+  if (!canAccess) return null;
 
-  if (!canView) return null;
-
-  const weekEnd    = new Date(currentWeek.getTime() + 6 * 86400000);
-  const weekLabel  = `${format(currentWeek, "d MMM")} – ${format(weekEnd, "d MMM yyyy")}`;
-  const monthLabel = `${MONTH_NAMES_TH[currentMonth.getMonth()]} ${currentMonth.getFullYear() + 543}`;
+  const summary = data?.summary;
+  const utilizationPct = summary && summary.totalPlanned > 0
+    ? Math.round((summary.totalHours / summary.totalPlanned) * 100) : 0;
 
   return (
-    <div>
-      {/* Header + Navigator */}
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+    <div className="space-y-5">
+      {/* ── Top bar ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
-          <p className="text-gray-500 text-sm">Project hours, workload, and utilization overview</p>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-gray-500 text-sm">ภาพรวม Resource & Timesheet</p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
-            <button onClick={() => setMode("week")} className={`px-4 py-1.5 font-medium transition-colors ${mode === "week" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>รายสัปดาห์</button>
-            <button onClick={() => setMode("month")} className={`px-4 py-1.5 font-medium transition-colors border-l border-gray-200 ${mode === "month" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>รายเดือน</button>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Period mode */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5 text-sm">
+            {(["week","month"] as const).map((m) => (
+              <button key={m} onClick={() => setMode(m)}
+                className={`px-3 py-1.5 rounded-md font-medium transition-all ${mode === m ? "bg-white shadow-sm text-blue-900" : "text-gray-500"}`}>
+                {m === "week" ? "สัปดาห์" : "เดือน"}
+              </button>
+            ))}
           </div>
-          {mode === "week" && (
-            <div className="flex items-center gap-1.5">
-              <button onClick={() => setCurrentWeek(subWeeks(currentWeek, 1))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">‹</button>
-              <span className="text-sm font-medium text-gray-700 min-w-[170px] text-center">{weekLabel}</span>
-              <button onClick={() => setCurrentWeek(addWeeks(currentWeek, 1))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">›</button>
-              <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 ml-1">สัปดาห์นี้</button>
+
+          {/* Period navigator */}
+          {mode === "week" ? (
+            <div className="flex items-center gap-1">
+              <button onClick={() => setSelectedWeek(w => subWeeks(w,1))} className="p-1.5 rounded hover:bg-gray-100">‹</button>
+              <span className="text-sm font-medium text-gray-700 min-w-[160px] text-center">{weekLabel}</span>
+              <button onClick={() => setSelectedWeek(w => addWeeks(w,1))} className="p-1.5 rounded hover:bg-gray-100">›</button>
+              <button onClick={() => setSelectedWeek(startOfWeek(new Date(),{weekStartsOn:1}))} className="text-xs text-blue-600 hover:underline ml-1">วันนี้</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <button onClick={() => setSelectedMonth(m => subMonths(m,1))} className="p-1.5 rounded hover:bg-gray-100">‹</button>
+              <span className="text-sm font-medium text-gray-700 min-w-[100px] text-center">{monthLabel}</span>
+              <button onClick={() => setSelectedMonth(m => addMonths(m,1))} className="p-1.5 rounded hover:bg-gray-100">›</button>
+              <button onClick={() => setSelectedMonth(startOfMonth(new Date()))} className="text-xs text-blue-600 hover:underline ml-1">เดือนนี้</button>
             </div>
           )}
-          {mode === "month" && (
-            <div className="flex items-center gap-1.5">
-              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">‹</button>
-              <span className="text-sm font-medium text-gray-700 min-w-[150px] text-center">{monthLabel}</span>
-              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">›</button>
-              <button onClick={() => setCurrentMonth(startOfMonth(new Date()))} className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 ml-1">เดือนนี้</button>
-            </div>
-          )}
+
+          {/* Project selector */}
+          <select
+            value={selectedProject}
+            onChange={(e) => setSelectedProject(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[220px]">
+            <option value="">🌐 All Projects</option>
+            {(data?.allProjects || []).map((p) => (
+              <option key={p.id} value={p.id}>{p.projectNumber} – {p.projectName}</option>
+            ))}
+          </select>
+
+          <button onClick={fetchData} className="text-xs text-gray-400 hover:text-blue-600 p-1.5 rounded hover:bg-gray-100">🔄</button>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-64"><div className="text-gray-400 text-lg animate-pulse">Loading dashboard…</div></div>
-      ) : !data ? (
-        <div className="text-red-500">Failed to load dashboard data.</div>
-      ) : (
+        <div className="ges-card p-16 text-center text-gray-400 animate-pulse">
+          <p className="text-4xl mb-3">📊</p><p>กำลังโหลดข้อมูล…</p>
+        </div>
+      ) : !data ? null : (
         <>
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+          {/* ── KPI row ── */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: "ชั่วโมงรวม", value: `${data.summary?.totalHours ?? 0}h`, sub: "Total Hours" },
-              { label: "Timesheets ที่ส่ง", value: data.summary?.submittedCount ?? 0, sub: "Submitted" },
-              { label: "พนักงานทั้งหมด", value: data.summary?.totalEmployees ?? 0, sub: "Employees" },
-              { label: "อัตราการส่ง", value: `${data.summary?.totalEmployees ? Math.round((data.summary.submittedCount / data.summary.totalEmployees) * 100) : 0}%`, sub: "Submit Rate" },
+              { label: "ชั่วโมงจริง", value: `${data.summary.totalHours}h`, sub: "Actual logged", color: "text-blue-900" },
+              { label: "ชั่วโมงแผน",  value: `${data.summary.totalPlanned}h`, sub: "Planned total", color: "text-purple-700" },
+              { label: "Utilization", value: `${utilizationPct}%`, sub: "Actual / Plan", color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
+              { label: "Timesheets",  value: data.summary.submittedCount, sub: "ส่งแล้ว", color: "text-gray-800" },
             ].map((k) => (
-              <div key={k.label} className="ges-card p-4 text-center">
-                <p className="text-xs text-gray-500 mb-1">{k.label}</p>
-                <p className="text-2xl font-bold text-blue-900">{k.value}</p>
-                <p className="text-xs text-gray-400">{k.sub}</p>
+              <div key={k.label} className="ges-card p-4">
+                <p className="text-xs text-gray-500">{k.label}</p>
+                <p className={`text-2xl font-bold mt-1 ${k.color}`}>{k.value}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{k.sub}</p>
               </div>
             ))}
           </div>
 
-          {(!data.projectDeptHours || data.projectDeptHours.length === 0) ? (
-            <div className="ges-card p-12 text-center text-gray-400">
-              <p className="text-4xl mb-3">📊</p>
-              <p className="text-lg font-medium">ไม่มีข้อมูลในช่วงเวลานี้</p>
-              <p className="text-sm mt-1">ลองเลือกสัปดาห์หรือเดือนอื่น</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-              {/* ① Stacked Bar: Hours by Project broken down by Department */}
-              <div className="ges-card p-5 lg:col-span-2">
-                <h2 className="font-semibold text-gray-800 mb-1">Hours by Project (by Department)</h2>
-                <p className="text-xs text-gray-400 mb-4">ชั่วโมงแต่ละโครงการแยกตามแผนก — คลิกแท่งเพื่อดูรายละเอียด</p>
-                <div style={{ height: 300 }}>
-                  <Bar
-                    data={{
-                      labels: data.projectDeptHours.map((p) => p.projectNumber),
-                      datasets: (data.allDepts || []).map((dept, i) => ({
-                        label: dept,
-                        data: data.projectDeptHours.map((p) => p.byDept[dept] || 0),
-                        backgroundColor: DEPT_COLORS[i % DEPT_COLORS.length],
-                        borderRadius: 2,
-                        stack: "stack",
-                      })),
-                    }}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: { display: true, position: "right" as const, labels: { boxWidth: 12, font: { size: 11 } } },
-                        tooltip: {
-                          callbacks: {
-                            title: (items) => {
-                              const idx = items[0].dataIndex;
-                              return data.projectDeptHours[idx].projectName;
-                            },
-                            label: (item) => ` ${item.dataset.label}: ${item.raw}h`,
-                          },
-                        },
-                      },
-                      scales: {
-                        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 11 } } },
-                        y: { stacked: true, beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
-                      },
-                      onClick: (_, elements) => {
-                        if (elements.length > 0) {
-                          const idx = elements[0].index;
-                          const pid = data.projectDeptHours[idx]?.projectId;
-                          if (pid) openDrillDown(pid);
-                        }
-                      },
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* ② Doughnut: Task Category */}
-              <div className="ges-card p-5">
-                <h2 className="font-semibold text-gray-800 mb-4">Hours by Task Category</h2>
-                <div className="flex items-center gap-6">
-                  <div style={{ height: 220, width: 220 }} className="flex-shrink-0">
-                    <Doughnut
-                      data={{
-                        labels: data.categoryHours.map((c) => c.category),
-                        datasets: [{ data: data.categoryHours.map((c) => c.hours), backgroundColor: DEPT_COLORS, borderWidth: 2, borderColor: "#fff" }],
-                      }}
-                      options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }}
-                    />
-                  </div>
-                  <div className="flex-1 space-y-1.5 overflow-y-auto max-h-48">
-                    {data.categoryHours.map((c, i) => (
-                      <div key={c.category} className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: DEPT_COLORS[i % DEPT_COLORS.length] }} />
-                        <span className="text-gray-600 flex-1 text-xs">{c.category}</span>
-                        <span className="font-semibold text-gray-900 text-xs">{c.hours}h</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* ③ Horizontal Bar: Workload by Project */}
-              <div className="ges-card p-5">
-                <h2 className="font-semibold text-gray-800 mb-4">Workload by Project</h2>
-                <div style={{ height: 260 }}>
-                  <Bar
-                    data={{
-                      labels: data.projectHours.map((p) => p.projectNumber),
-                      datasets: [{
-                        label: "Hours",
-                        data: data.projectHours.map((p) => p.hours),
-                        backgroundColor: "#2563eb",
+          {/* ── Chart 1: Plan vs Actual ── */}
+          <div className="ges-card p-5">
+            <h2 className="font-semibold text-gray-800 mb-1">① Plan vs Actual Hours by Project</h2>
+            <p className="text-xs text-gray-400 mb-4">แท่งทึบ = Actual · แท่งโปร่ง = Plan · แดง = เกิน Plan</p>
+            {data.planVsActual.length === 0 ? (
+              <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan หรือ Actual ในช่วงเวลานี้</div>
+            ) : (
+              <div style={{ height: 260 }}>
+                <Bar
+                  data={{
+                    labels: data.planVsActual.map((p) => p.projectNumber),
+                    datasets: [
+                      {
+                        label: "Plan",
+                        data: data.planVsActual.map((p) => p.planned),
+                        backgroundColor: "rgba(37,99,235,0.15)",
+                        borderColor: "rgba(37,99,235,0.5)",
+                        borderWidth: 2,
                         borderRadius: 4,
-                      }],
-                    }}
-                    options={{
-                      responsive: true, maintainAspectRatio: false,
-                      indexAxis: "y" as const,
-                      plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                          callbacks: {
-                            title: (items) => data.projectHours[items[0].dataIndex].projectName,
-                            label: (item) => ` ${item.raw}h`,
-                          },
-                        },
                       },
-                      scales: {
-                        x: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
-                        y: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                      {
+                        label: "Actual",
+                        data: data.planVsActual.map((p) => p.actual),
+                        backgroundColor: data.planVsActual.map((p) => p.actual > p.planned && p.planned > 0 ? "rgba(220,38,38,0.75)" : "rgba(37,99,235,0.75)"),
+                        borderRadius: 4,
                       },
-                      onClick: (_, elements) => {
-                        if (elements.length > 0) {
-                          const pid = data.projectHours[elements[0].index]?.projectId;
-                          if (pid) openDrillDown(pid);
-                        }
-                      },
-                    }}
-                  />
-                </div>
+                    ],
+                  }}
+                  options={{
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: true, position: "top" as const },
+                      tooltip: { callbacks: { afterBody: (items) => {
+                        const idx = items[0].dataIndex;
+                        const p = data.planVsActual[idx];
+                        const pct = p.planned > 0 ? Math.round((p.actual/p.planned)*100) : 0;
+                        return [`${p.projectName}`, `Utilization: ${pct}%`];
+                      }}},
+                    },
+                    scales: { y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } }, x: { grid: { display: false } } },
+                  }}
+                />
               </div>
+            )}
+          </div>
 
-              {/* ④ Horizontal Bar: Top 8 Employees */}
-              <div className="ges-card p-5">
-                <h2 className="font-semibold text-gray-800 mb-4">Top 8 Employees by Hours</h2>
-                <div style={{ height: 260 }}>
-                  <Bar
+          {/* ── Charts 2+3 ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+            {/* Chart 2: Task Breakdown */}
+            <div className="ges-card p-5 lg:col-span-2">
+              <h2 className="font-semibold text-gray-800 mb-1">② Task Breakdown</h2>
+              <p className="text-xs text-gray-400 mb-3">
+                {selectedProject ? "ชั่วโมงแยก Discipline โปรเจกต์นี้" : "ชั่วโมงแยกตาม Task Category"}
+              </p>
+              {data.taskBreakdown.length === 0 ? (
+                <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
+              ) : (
+                <div style={{ height: 220 }}>
+                  <Doughnut
                     data={{
-                      labels: data.topEmployees.map((e) => e.name.split(" ")[0]),
-                      datasets: [{ label: "Hours", data: data.topEmployees.map((e) => e.hours), backgroundColor: "#059669", borderRadius: 4 }],
+                      labels: data.taskBreakdown.slice(0, 8).map((t) => t.category),
+                      datasets: [{ data: data.taskBreakdown.slice(0, 8).map((t) => t.hours), backgroundColor: CAT_COLORS, borderWidth: 2 }],
                     }}
                     options={{
                       responsive: true, maintainAspectRatio: false,
-                      indexAxis: "y" as const,
                       plugins: {
-                        legend: { display: false },
-                        tooltip: { callbacks: { title: (items) => data.topEmployees[items[0].dataIndex].name, label: (item) => ` ${item.raw}h` } },
-                      },
-                      scales: {
-                        x: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
-                        y: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                        legend: { position: "right" as const, labels: { font: { size: 10 }, boxWidth: 12, padding: 8 } },
+                        tooltip: { callbacks: { label: (i) => ` ${i.label}: ${i.raw}h` } },
                       },
                     }}
                   />
                 </div>
-              </div>
+              )}
+            </div>
 
-              {/* ⑤ Utilization Trend (combined bar+line) */}
-              <div className="ges-card p-5 lg:col-span-2">
-                <h2 className="font-semibold text-gray-800 mb-1">
-                  {mode === "month" ? `Weekly Utilization — ${monthLabel}` : "Weekly Utilization Trend (Last 6 Weeks)"}
-                </h2>
-                <p className="text-xs text-gray-400 mb-4">ชั่วโมงที่ส่งจริง (แท่ง) และ % utilization เทียบ 40h/คน (เส้น)</p>
-                <div style={{ height: 230 }}>
+            {/* Chart 3: Utilization Trend */}
+            <div className="ges-card p-5 lg:col-span-3">
+              <h2 className="font-semibold text-gray-800 mb-1">③ Utilization Trend</h2>
+              <p className="text-xs text-gray-400 mb-3">% ชั่วโมงจริง / (40h × จำนวนพนักงาน) · เส้นแดง = เป้า 80%</p>
+              {data.weeklyTrend.length === 0 ? (
+                <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
+              ) : (
+                <div style={{ height: 220 }}>
                   <Chart
                     type="bar"
                     data={{
                       labels: data.weeklyTrend.map((w) => w.week),
                       datasets: [
-                        { type: "bar" as const, label: "ชั่วโมง (h)", data: data.weeklyTrend.map((w) => w.totalHrs ?? 0), backgroundColor: "rgba(37,99,235,0.25)", borderRadius: 4, yAxisID: "yHrs" },
-                        { type: "line" as const, label: "Utilization %", data: data.weeklyTrend.map((w) => w.utilization), borderColor: "#1e3a5f", backgroundColor: "transparent", tension: 0.3, pointBackgroundColor: "#1e3a5f", pointRadius: 5, yAxisID: "yPct" },
+                        { type: "bar"  as const, label: "ชั่วโมง (h)", data: data.weeklyTrend.map((w) => w.totalHrs), backgroundColor: "rgba(37,99,235,0.2)", borderRadius: 4, yAxisID: "yHrs" },
+                        { type: "line" as const, label: "Utilization %", data: data.weeklyTrend.map((w) => w.utilization), borderColor: "#1e3a5f", backgroundColor: "transparent", tension: 0.3, pointBackgroundColor: "#1e3a5f", pointRadius: 4, yAxisID: "yPct" },
+                        { type: "line" as const, label: "Target 80%", data: data.weeklyTrend.map(() => 80), borderColor: "#dc2626", borderDash: [6, 3], backgroundColor: "transparent", pointRadius: 0, yAxisID: "yPct" },
                       ],
                     }}
                     options={{
                       responsive: true, maintainAspectRatio: false,
-                      plugins: {
-                        legend: { display: true, position: "top" as const },
-                        tooltip: { callbacks: { label: (item) => item.datasetIndex === 1 ? ` Utilization: ${item.raw}%` : ` ชั่วโมง: ${item.raw}h` } },
-                      },
+                      plugins: { legend: { display: true, position: "top" as const }, tooltip: { callbacks: { label: (i) => i.datasetIndex === 0 ? ` ${i.raw}h` : ` ${i.raw}%` } } },
                       scales: {
-                        yHrs: { type: "linear" as const, position: "left" as const, beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
+                        yHrs: { type: "linear" as const, position: "left"  as const, beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
                         yPct: { type: "linear" as const, position: "right" as const, beginAtZero: true, max: 130, grid: { display: false }, ticks: { callback: (v) => `${v}%` } },
                         x: { grid: { display: false } },
                       },
                     }}
                   />
                 </div>
-              </div>
-
-              {/* ⑥ Plan vs Actual — click to drill down */}
-              {data.planVsActual?.length > 0 && (
-                <div className="ges-card p-5 lg:col-span-2">
-                  <h2 className="font-semibold text-gray-800 mb-1">Plan vs Actual Hours by Project</h2>
-                  <p className="text-xs text-gray-400 mb-4">คลิกแท่งเพื่อดูรายละเอียดรายบุคคล</p>
-                  <div style={{ height: 300 }}>
-                    <Bar
-                      data={{
-                        labels: data.planVsActual.map((p) => p.projectNumber),
-                        datasets: [
-                          { label: "แผน (Planned)", data: data.planVsActual.map((p) => p.planned), backgroundColor: "rgba(37,99,235,0.7)", borderRadius: 4 },
-                          { label: "จริง (Actual)",  data: data.planVsActual.map((p) => p.actual),  backgroundColor: "rgba(5,150,105,0.7)",  borderRadius: 4 },
-                        ],
-                      }}
-                      options={{
-                        responsive: true, maintainAspectRatio: false,
-                        plugins: {
-                          legend: { display: true, position: "top" as const },
-                          tooltip: {
-                            callbacks: {
-                              title: (items) => data.planVsActual[items[0].dataIndex].projectName,
-                              label: (item) => ` ${item.dataset.label}: ${item.raw}h`,
-                            },
-                          },
-                        },
-                        scales: {
-                          y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
-                          x: { grid: { display: false }, ticks: { font: { size: 11 } } },
-                        },
-                        onClick: (_, elements) => {
-                          if (elements.length > 0) {
-                            const pid = data.planVsActual[elements[0].index]?.projectId;
-                            if (pid) openDrillDown(pid);
-                          }
-                        },
-                      }}
-                    />
-                  </div>
-                </div>
               )}
-
             </div>
-          )}
-        </>
-      )}
+          </div>
 
-      {/* ── Drill-Down Modal ──────────────────────────────────── */}
-      {(drillDown || drillLoading) && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDrillDown(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            {drillLoading ? (
-              <div className="p-16 text-center text-gray-400 animate-pulse">Loading…</div>
-            ) : drillDown && (
-              <>
-                <div className="px-6 py-4 border-b border-gray-100 flex items-start justify-between">
-                  <div>
-                    <p className="text-xs font-mono text-blue-600 font-semibold">{drillDown.project.projectNumber}</p>
-                    <h3 className="text-lg font-bold text-gray-900 mt-0.5">{drillDown.project.projectName}</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">{mode === "month" ? monthLabel : weekLabel}</p>
-                  </div>
-                  <button onClick={() => setDrillDown(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-4">×</button>
-                </div>
-
-                {/* Dept summary */}
-                {Object.keys(drillDown.planByDept).length > 0 && (
-                  <div className="px-6 py-4 border-b border-gray-100">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-3">สรุปรายแผนก</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {Object.entries(drillDown.planByDept).map(([dept, planned]) => {
-                        const actual = drillDown.actualByDept[dept] || 0;
-                        const pct = planned > 0 ? Math.round((actual / planned) * 100) : null;
-                        return (
-                          <div key={dept} className="bg-gray-50 rounded-xl p-3">
-                            <p className="text-xs font-semibold text-gray-700 truncate">{dept}</p>
-                            <div className="flex gap-2 mt-1.5 text-xs">
-                              <span className="text-blue-700">Plan: {planned}h</span>
-                              <span className="text-green-700">Act: {actual}h</span>
-                            </div>
-                            {pct !== null && (
-                              <div className="mt-1.5">
-                                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${pct >= 100 ? "bg-red-400" : pct >= 80 ? "bg-green-500" : "bg-amber-400"}`}
-                                    style={{ width: `${Math.min(pct, 100)}%` }} />
-                                </div>
-                                <p className="text-xs text-gray-500 mt-0.5">{pct}%</p>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Per-person table */}
-                <div className="px-6 py-4">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">รายบุคคล — ชั่วโมงที่ลงจริง</h4>
-                  {drillDown.employees.length === 0 ? (
-                    <p className="text-gray-400 text-sm text-center py-6">ไม่มีข้อมูลในช่วงเวลานี้</p>
-                  ) : (
-                    <table className="ges-table w-full">
-                      <thead>
-                        <tr>
-                          <th className="text-left">พนักงาน</th>
-                          <th className="text-left">แผนก</th>
-                          <th className="text-right">ชั่วโมงจริง</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {drillDown.employees.map((emp) => (
-                          <tr key={emp.employeeId}>
-                            <td>
-                              <p className="font-medium text-sm">{emp.name}</p>
-                              <p className="text-xs font-mono text-blue-600">{emp.employeeId}</p>
-                            </td>
-                            <td className="text-xs text-gray-500">{emp.department}</td>
-                            <td className="text-right font-semibold text-sm text-green-700">{emp.actualHrs}h</td>
-                          </tr>
-                        ))}
-                        <tr className="bg-gray-50">
-                          <td colSpan={2} className="font-semibold text-gray-700 text-sm">รวม</td>
-                          <td className="text-right font-bold text-blue-900">
-                            {drillDown.employees.reduce((s, e) => s + e.actualHrs, 0)}h
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </>
+          {/* ── Chart 4: Top Employees ── */}
+          <div className="ges-card p-5">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <h2 className="font-semibold text-gray-800">④ Top Employees by Hours</h2>
+                <p className="text-xs text-gray-400">{selectedProject ? "เฉพาะคนในโปรเจกต์นี้" : "พนักงานที่มีชั่วโมงมากสุด"}</p>
+              </div>
+              <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+                <option value="">ทุกแผนก</option>
+                {data.allDepts.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            {data.topEmployees.length === 0 ? (
+              <div className="h-32 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
+            ) : (
+              <div style={{ height: Math.max(180, data.topEmployees.length * 36) }}>
+                <Bar
+                  data={{
+                    labels: data.topEmployees.map((e) => e.name),
+                    datasets: [{
+                      label: "ชั่วโมง",
+                      data: data.topEmployees.map((e) => e.hours),
+                      backgroundColor: data.topEmployees.map((e) => {
+                        const idx = data.allDepts.indexOf(e.department);
+                        return DEPT_COLORS[idx % DEPT_COLORS.length] + "cc";
+                      }),
+                      borderRadius: 4,
+                    }],
+                  }}
+                  options={{
+                    indexAxis: "y" as const, responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: (i) => `  แผนก: ${data.topEmployees[i.dataIndex].department}` } } },
+                    scales: { x: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } }, y: { grid: { display: false } } },
+                  }}
+                />
+              </div>
             )}
           </div>
-        </div>
+
+          {/* ── Chart 5: Plan vs Actual Matrix ── */}
+          <div className="ges-card overflow-x-auto">
+            <div className="px-5 py-3 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-800">⑤ Plan vs Actual Matrix</h2>
+              <div className="flex gap-4 mt-1 text-xs">
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-300" /> Actual &gt; Plan</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300" /> On Plan (≥80%)</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-100 border border-amber-300" /> Under Plan (&lt;80%)</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-gray-100 border border-gray-200" /> ไม่มีแผน</span>
+              </div>
+            </div>
+            {data.planActualMatrix.length === 0 ? (
+              <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan ในระบบ</div>
+            ) : (
+              <table className="text-xs w-full">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="text-left px-4 py-2.5 font-semibold text-gray-700 min-w-[140px] sticky left-0 bg-gray-50 border-r border-gray-200 z-10">โปรเจกต์</th>
+                    {data.matrixMonths.map((m) => (
+                      <th key={`${m.year}-${m.month}`} className="px-2 py-2.5 text-center min-w-[90px] font-medium text-gray-600">{m.label}</th>
+                    ))}
+                    <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700 border-l border-gray-200">Total Plan</th>
+                    <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700">Total Actual</th>
+                    <th className="px-3 py-2.5 text-center min-w-[70px] font-semibold text-gray-700">Variance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.planActualMatrix.map((proj) => {
+                    const variance = proj.totalPlanned > 0
+                      ? Math.round(((proj.totalActual - proj.totalPlanned) / proj.totalPlanned) * 100)
+                      : 0;
+                    return (
+                      <tr key={proj.projectId} className="border-t border-gray-100 hover:bg-gray-50">
+                        <td className="px-4 py-2 sticky left-0 bg-white border-r border-gray-200 z-10">
+                          <p className="font-mono font-semibold text-blue-700">{proj.projectNumber}</p>
+                          <p className="text-gray-500 text-xs truncate max-w-[130px]">{proj.projectName}</p>
+                        </td>
+                        {proj.months.map((m) => {
+                          const hasData = m.planned > 0 || m.actual > 0;
+                          const over    = m.planned > 0 && m.actual > m.planned;
+                          const onPlan  = m.planned > 0 && m.actual >= m.planned * 0.8;
+                          const under   = m.planned > 0 && m.actual < m.planned * 0.8;
+                          const cellBg  = !hasData ? "" : over ? "bg-red-50" : onPlan ? "bg-green-50" : under ? "bg-amber-50" : "";
+                          const pct     = m.planned > 0 ? Math.round((m.actual / m.planned) * 100) : 0;
+                          return (
+                            <td key={`${m.year}-${m.month}`}
+                              className={`px-2 py-2 text-center ${cellBg}`}
+                              title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%` : "ไม่มีแผน"}>
+                              {hasData ? (
+                                <div>
+                                  <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"}`}>
+                                    {m.actual}h
+                                  </div>
+                                  <div className="text-gray-400">/{m.planned}h</div>
+                                  {m.planned > 0 && <div className={`text-xs font-medium ${over ? "text-red-600" : onPlan ? "text-green-600" : "text-amber-600"}`}>{pct}%</div>}
+                                </div>
+                              ) : <span className="text-gray-200">–</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="px-3 py-2 text-center border-l border-gray-200 font-semibold text-purple-800">{proj.totalPlanned > 0 ? `${proj.totalPlanned}h` : "–"}</td>
+                        <td className="px-3 py-2 text-center font-semibold text-blue-900">{proj.totalActual > 0 ? `${proj.totalActual}h` : "–"}</td>
+                        <td className={`px-3 py-2 text-center font-bold ${variance > 0 ? "text-red-600" : variance < -20 ? "text-amber-600" : "text-green-600"}`}>
+                          {proj.totalPlanned > 0 ? `${variance > 0 ? "+" : ""}${variance}%` : "–"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
