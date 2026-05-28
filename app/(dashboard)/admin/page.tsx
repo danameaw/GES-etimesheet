@@ -33,7 +33,8 @@ export default function AdminPage() {
   const [search, setSearch] = useState("");
   const [acting, setActing] = useState<Set<string>>(new Set());
   const [view, setView] = useState<"employee"|"project">("employee");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());       // employee-view: timesheetIds
+  const [selectedProjIds, setSelectedProjIds] = useState<Set<string>>(new Set()); // project-view: projectIds
   const [bulkLoading, setBulkLoading] = useState(false);
 
   const role    = (session?.user as any)?.role;
@@ -48,6 +49,7 @@ export default function AdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setSelectedIds(new Set());
+    setSelectedProjIds(new Set());
     const weekStr = format(currentWeek, "yyyy-MM-dd");
     const [empRes, projRes] = await Promise.all([
       fetch(`/api/admin?week=${weekStr}`),
@@ -95,6 +97,37 @@ export default function AdminPage() {
       return n;
     });
   };
+
+  const toggleSelectProj = (projId: string) => {
+    setSelectedProjIds((s) => {
+      const n = new Set(s);
+      if (n.has(projId)) { n.delete(projId); } else { n.add(projId); }
+      return n;
+    });
+  };
+
+  // Approve all submitted employees in selected projects
+  async function bulkApproveProjects() {
+    if (selectedProjIds.size === 0) return;
+    setBulkLoading(true);
+    const tsIds = new Set<string>();
+    for (const proj of projectRows) {
+      if (!selectedProjIds.has(proj.projectId)) continue;
+      for (const emp of proj.employees) {
+        if (emp.status === "submitted" && emp.timesheetId) tsIds.add(emp.timesheetId);
+      }
+    }
+    await Promise.all(
+      Array.from(tsIds).map((id) =>
+        fetch(`/api/timesheets/${id}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "approve" }),
+        })
+      )
+    );
+    setBulkLoading(false);
+    load();
+  }
 
   const selectAllSubmitted = () => {
     const submittedIds = employees.filter((e) => e.status === "submitted" && e.timesheetId).map((e) => e.timesheetId!);
@@ -311,21 +344,54 @@ export default function AdminPage() {
       {/* ── PROJECT VIEW ─────────────────────────────────────── */}
       {view === "project" && (
         <div className="space-y-4">
+          {/* Multi-project bulk approve bar (PD only) */}
+          {isPD && !loading && projectRows.length > 0 && (
+            <div className="ges-card px-4 py-3 flex items-center gap-3 flex-wrap">
+              <span className="text-sm text-gray-600 font-medium">เลือก Project ที่ต้องการอนุมัติ:</span>
+              <button
+                onClick={() => {
+                  const submittedProjIds = projectRows.filter((p) => p.employees.some((e: any) => e.status === "submitted")).map((p) => p.projectId);
+                  setSelectedProjIds(new Set(submittedProjIds));
+                }}
+                className="text-xs border border-amber-300 text-amber-700 px-3 py-1.5 rounded hover:bg-amber-50">
+                เลือกทั้งหมดที่รออนุมัติ
+              </button>
+              {selectedProjIds.size > 0 && (
+                <>
+                  <button onClick={() => setSelectedProjIds(new Set())} className="text-xs text-gray-400 hover:text-gray-600">ยกเลิก</button>
+                  <button onClick={bulkApproveProjects} disabled={bulkLoading}
+                    className="text-xs bg-green-600 text-white px-4 py-1.5 rounded hover:bg-green-700 disabled:opacity-50 font-medium">
+                    {bulkLoading ? "กำลังอนุมัติ…" : `✓ อนุมัติ ${selectedProjIds.size} Project ที่เลือก`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {loading ? <div className="ges-card p-10 text-center text-gray-400">กำลังโหลด…</div> :
            projectRows.length === 0 ? (
             <div className="ges-card p-10 text-center text-gray-400">ไม่มีข้อมูล Timesheet สำหรับสัปดาห์นี้</div>
           ) : projectRows.map((proj) => {
-            const submittedEmps = proj.employees.filter((e) => e.status === "submitted");
-            const approvedEmps  = proj.employees.filter((e) => e.status === "approved");
-            const projTsIds = submittedEmps.map((e) => e.timesheetId);
+            const submittedEmps = proj.employees.filter((e: any) => e.status === "submitted");
+            const approvedEmps  = proj.employees.filter((e: any) => e.status === "approved");
+            const isChecked     = selectedProjIds.has(proj.projectId);
+            const hasSubmitted  = submittedEmps.length > 0;
 
             return (
-              <div key={proj.projectId} className="ges-card overflow-hidden">
+              <div key={proj.projectId} className={`ges-card overflow-hidden transition-all ${isChecked ? "ring-2 ring-green-400" : ""}`}>
                 {/* Project header */}
-                <div className="flex items-center justify-between px-5 py-3 bg-blue-50 border-b border-blue-100">
-                  <div>
-                    <span className="font-mono text-xs text-blue-600 font-semibold">{proj.projectNumber}</span>
-                    <span className="ml-2 font-semibold text-gray-800">{proj.projectName}</span>
+                <div className={`flex items-center justify-between px-5 py-3 border-b ${isChecked ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-100"}`}>
+                  <div className="flex items-center gap-3">
+                    {/* Project-level checkbox (PD only, only when there are submitted) */}
+                    {isPD && hasSubmitted && (
+                      <input type="checkbox" checked={isChecked}
+                        onChange={() => toggleSelectProj(proj.projectId)}
+                        className="rounded border-gray-300 text-green-600 cursor-pointer w-4 h-4" />
+                    )}
+                    <div>
+                      <span className="font-mono text-xs text-blue-600 font-semibold">{proj.projectNumber}</span>
+                      <span className="ml-2 font-semibold text-gray-800">{proj.projectName}</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <span className="text-gray-500 text-xs">{proj.employees.length} คน</span>
@@ -335,12 +401,13 @@ export default function AdminPage() {
                     {submittedEmps.length > 0 && (
                       <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full">รออนุมัติ {submittedEmps.length}</span>
                     )}
-                    {/* Approve all submitted in project */}
+                    {/* Approve this project's submitted employees */}
                     {isPD && submittedEmps.length > 0 && (
                       <button
                         onClick={async () => {
                           setBulkLoading(true);
-                          await Promise.all(projTsIds.map((id) =>
+                          const tsIds = submittedEmps.map((e: any) => e.timesheetId);
+                          await Promise.all(tsIds.map((id: string) =>
                             fetch(`/api/timesheets/${id}`, {
                               method: "PATCH", headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ action: "approve" }),
@@ -351,7 +418,7 @@ export default function AdminPage() {
                         }}
                         disabled={bulkLoading}
                         className="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 disabled:opacity-50 font-medium">
-                        ✓ อนุมัติทั้งหมด ({submittedEmps.length})
+                        ✓ อนุมัติ Project นี้ ({submittedEmps.length})
                       </button>
                     )}
                   </div>
@@ -370,7 +437,7 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {proj.employees.sort((a, b) => b.projectHrs - a.projectHrs).map((emp) => (
+                    {[...proj.employees].sort((a, b) => a.employeeId.localeCompare(b.employeeId)).map((emp) => (
                       <tr key={emp.id}>
                         <td>
                           <p className="font-medium text-sm">{emp.name}</p>

@@ -133,9 +133,9 @@ export default function TimesheetPage() {
 
   useEffect(() => { loadTimesheet(); }, [loadTimesheet]);
 
-  // Holiday days don't count toward totals (even if old saved data has hours there)
-  const totalByDay = DAYS.map((d, i) =>
-    isHoliday(i) ? 0 : rows.reduce((sum, r) => sum + (Number(r[d.key]) || 0), 0)
+  // Sum all logged hours per day (holidays are now informational only — hours still count)
+  const totalByDay = DAYS.map((d) =>
+    rows.reduce((sum, r) => sum + (Number(r[d.key]) || 0), 0)
   );
   const totalWeekHrs = totalByDay.reduce((a, b) => a + b, 0);
 
@@ -160,15 +160,8 @@ export default function TimesheetPage() {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
       return;
     }
-    // Zero out holiday-day hours before sending (handles data entered before holidays were set)
-    const sanitizedRows = validRows.map((row) => {
-      const r = { ...row };
-      DAYS.forEach((d, i) => { if (isHoliday(i)) (r as any)[d.key] = 0; });
-      return r;
-    });
-
-    if (action === "submit" && totalWeekHrs < weekCapacity) {
-      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than ${weekCapacity}h (ปรับตามวันหยุด). Submit anyway?`);
+    if (action === "submit" && totalWeekHrs < 40) {
+      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than 40h. Submit anyway?`);
       if (!ok) return;
     }
 
@@ -181,7 +174,7 @@ export default function TimesheetPage() {
         body: JSON.stringify({
           weekStart: format(currentWeek, "yyyy-MM-dd"),
           weekEnd:   format(weekEnd, "yyyy-MM-dd"),
-          entries:   sanitizedRows,
+          entries:   validRows,
           action:    action === "submit" ? "submit" : "save",
         }),
       });
@@ -281,10 +274,10 @@ export default function TimesheetPage() {
       )}
 
       {/* Hours warning */}
-      {totalWeekHrs > 0 && totalWeekHrs < weekCapacity && (
+      {totalWeekHrs > 0 && totalWeekHrs < 40 && (
         <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-2">
           <span>⚠️</span>
-          <span>Total hours ({totalWeekHrs}h) is below {weekCapacity}h{weekHolidayCount > 0 ? ` (ปรับตามวันหยุด ${weekHolidayCount} วัน)` : ""}. Please complete your timesheet.</span>
+          <span>Total hours ({totalWeekHrs}h) is below 40h. Please complete your timesheet or log Leave/Holiday hours for remaining time.</span>
         </div>
       )}
 
@@ -314,8 +307,7 @@ export default function TimesheetPage() {
           </thead>
           <tbody>
             {rows.map((row) => {
-              // Exclude holiday-day hours from row total
-              const rowTotal = DAYS.reduce((sum, d, i) => sum + (isHoliday(i) ? 0 : Number(row[d.key]) || 0), 0);
+              const rowTotal = DAYS.reduce((sum, d) => sum + (Number(row[d.key]) || 0), 0);
               return (
                 <tr key={row.id}>
                   {/* Project selector */}
@@ -357,21 +349,17 @@ export default function TimesheetPage() {
                     const isSun   = weekDates[i].getDay() === 0;
                     return (
                       <td key={d.key} className={`text-center ${isHol ? "bg-red-50" : (isSat || isSun) ? "bg-gray-50" : ""}`}>
-                        {isHol ? (
-                          <div className="text-xs text-red-300 font-medium py-1">🏖️</div>
-                        ) : (
-                          <input
-                            type="number"
-                            min="0"
-                            max="24"
-                            step="0.5"
-                            value={row[d.key] || ""}
-                            onChange={(e) => updateRow(row.id, d.key, e.target.value)}
-                            disabled={!canEdit}
-                            className="hours-input disabled:bg-gray-100"
-                            placeholder="0"
-                          />
-                        )}
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          step="0.5"
+                          value={row[d.key] || ""}
+                          onChange={(e) => updateRow(row.id, d.key, e.target.value)}
+                          disabled={!canEdit}
+                          className={`hours-input disabled:bg-gray-100 ${isHol ? "border-red-200 bg-red-50" : ""}`}
+                          placeholder="0"
+                        />
                       </td>
                     );
                   })}

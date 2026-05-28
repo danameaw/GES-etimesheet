@@ -20,13 +20,25 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const projectId = searchParams.get("projectId");
 
+  // forApproval=1 → Approval page context: PD/admin see ALL non-draft projects
+  // (bypasses pdId filter so revision_requested projects always surface)
+  const forApproval = searchParams.get("forApproval") === "1";
+
   // Build project filter:
-  // PM  → own projects (managerId = empDbId)
-  // PD  → projects assigned as PD (pdId = empDbId)
-  // admin → all active projects
+  // PM        → own projects (managerId = empDbId)
+  // PD normal → projects where pdId = empDbId
+  // PD/admin forApproval → all active non-draft projects
+  // admin     → all active projects
   let projectWhere: any = { isActive: true };
   if (role === "pm")  projectWhere = { managerId: empDbId, isActive: true };
-  if (role === "pd")  projectWhere = { pdId: empDbId, isActive: true };
+  if (role === "pd") {
+    projectWhere = forApproval
+      ? { isActive: true, planStatus: { not: "draft" } }
+      : { pdId: empDbId, isActive: true };
+  }
+  if (role === "admin" && forApproval) {
+    projectWhere = { isActive: true, planStatus: { not: "draft" } };
+  }
 
   const projects = await prisma.project.findMany({
     where: projectWhere,

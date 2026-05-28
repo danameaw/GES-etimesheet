@@ -206,6 +206,20 @@ export async function GET(req: NextRequest) {
   const totalHours   = entries.reduce((s, e) => s + e.totalHrs, 0);
   const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
 
+  // ── 6. Leave/Holiday Breakdown (task category "Leave") ──
+  const leaveEntries = entries.filter((e) =>
+    e.taskCode.category === "Leave" || e.taskCode.code === "1001"
+  );
+  const leaveByEmp = new Map<string, { name: string; employeeId: string; department: string; hours: number }>();
+  for (const e of leaveEntries) {
+    const emp = e.ts.employee;
+    const x   = leaveByEmp.get(emp.id);
+    if (x) x.hours += e.totalHrs;
+    else leaveByEmp.set(emp.id, { name: emp.name, employeeId: emp.employeeId, department: emp.department, hours: e.totalHrs });
+  }
+  const leaveBreakdown = Array.from(leaveByEmp.values()).sort((a, b) => b.hours - a.hours);
+  const totalLeaveHrs  = leaveEntries.reduce((s, e) => s + e.totalHrs, 0);
+
   return NextResponse.json({
     allProjects,
     planVsActual,
@@ -214,7 +228,8 @@ export async function GET(req: NextRequest) {
     topEmployees,
     allDepts,
     planActualMatrix,
-    matrixMonths: matMonths,
-    summary: { totalHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode },
+    matrixMonths:    matMonths,
+    leaveBreakdown,
+    summary: { totalHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode, totalLeaveHrs },
   });
 }

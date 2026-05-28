@@ -19,6 +19,7 @@ interface PlanVsActual   { projectId: string; projectNumber: string; projectName
 interface TaskRow         { category: string; hours: number; }
 interface TrendRow        { week: string; utilization: number; totalHrs: number; }
 interface EmpRow          { name: string; hours: number; department: string; }
+interface LeaveRow        { name: string; employeeId: string; department: string; hours: number; }
 interface MatrixProject   { projectId: string; projectNumber: string; projectName: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; }
 interface MatrixMonth     { year: number; month: number; label: string; }
 
@@ -31,7 +32,8 @@ interface DashData {
   allDepts:         string[];
   planActualMatrix: MatrixProject[];
   matrixMonths:     MatrixMonth[];
-  summary:          { totalHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string };
+  leaveBreakdown:   LeaveRow[];
+  summary:          { totalHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number };
 }
 
 export default function DashboardPage() {
@@ -131,12 +133,13 @@ export default function DashboardPage() {
       ) : !data ? null : (
         <>
           {/* ── KPI row ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
             {[
-              { label: "ชั่วโมงจริง", value: `${data.summary.totalHours}h`, sub: "Actual logged", color: "text-blue-900" },
-              { label: "ชั่วโมงแผน",  value: `${data.summary.totalPlanned}h`, sub: "Planned total", color: "text-purple-700" },
-              { label: "Utilization", value: `${utilizationPct}%`, sub: "Actual / Plan", color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
-              { label: "Timesheets",  value: data.summary.submittedCount, sub: "ส่งแล้ว", color: "text-gray-800" },
+              { label: "ชั่วโมงจริง",    value: `${data.summary.totalHours}h`,    sub: "Actual logged",    color: "text-blue-900" },
+              { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: "Planned total",    color: "text-purple-700" },
+              { label: "Utilization",    value: `${utilizationPct}%`,              sub: "Actual / Plan",    color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
+              { label: "Timesheets",     value: data.summary.submittedCount,       sub: "ส่งแล้ว",          color: "text-gray-800" },
+              { label: "🏖️ ลา/วันหยุด", value: `${data.summary.totalLeaveHrs ?? 0}h`, sub: "Leave/Holiday hrs", color: "text-orange-600" },
             ].map((k) => (
               <div key={k.label} className="ges-card p-4">
                 <p className="text-xs text-gray-500">{k.label}</p>
@@ -294,10 +297,56 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* ── Chart 5: Plan vs Actual Matrix ── */}
+          {/* ── Chart 5: Leave / Holiday ── */}
+          <div className="ges-card p-5">
+            <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+              <div>
+                <h2 className="font-semibold text-gray-800">⑤ 🏖️ Leave / Holiday</h2>
+                <p className="text-xs text-gray-400">ชั่วโมง Leave/Holiday ของพนักงานในช่วงเวลานี้ (task code 1001)</p>
+              </div>
+              {(data.summary.totalLeaveHrs ?? 0) > 0 && (
+                <span className="text-sm font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-full">
+                  รวม {data.summary.totalLeaveHrs}h · {data.leaveBreakdown?.length ?? 0} คน
+                </span>
+              )}
+            </div>
+            {!data.leaveBreakdown || data.leaveBreakdown.length === 0 ? (
+              <div className="h-24 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล Leave/Holiday ในช่วงเวลานี้</div>
+            ) : (
+              <div style={{ height: Math.max(140, data.leaveBreakdown.length * 38) }}>
+                <Bar
+                  data={{
+                    labels: data.leaveBreakdown.map((e) => `${e.name} (${e.employeeId})`),
+                    datasets: [{
+                      label: "ชั่วโมง Leave/Holiday",
+                      data:  data.leaveBreakdown.map((e) => e.hours),
+                      backgroundColor: "rgba(234,88,12,0.65)",
+                      borderRadius: 4,
+                    }],
+                  }}
+                  options={{
+                    indexAxis: "y" as const,
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { callbacks: {
+                        afterLabel: (i) => `  แผนก: ${data.leaveBreakdown[i.dataIndex].department}`,
+                      }},
+                    },
+                    scales: {
+                      x: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
+                      y: { grid: { display: false } },
+                    },
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ── Chart 6: Plan vs Actual Matrix ── */}
           <div className="ges-card overflow-x-auto">
             <div className="px-5 py-3 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-800">⑤ Plan vs Actual Matrix</h2>
+              <h2 className="font-semibold text-gray-800">⑥ Plan vs Actual Matrix</h2>
               <div className="flex gap-4 mt-1 text-xs">
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-300" /> Actual &gt; Plan</span>
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300" /> On Plan (≥80%)</span>

@@ -39,8 +39,8 @@ export default function ResourceApprovalPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Get all projects (for PD: their assigned projects; for admin: all)
-    const res = await fetch("/api/resource-plan-monthly");
+    // forApproval=1 → bypass pdId filter so revision_requested projects always show
+    const res = await fetch("/api/resource-plan-monthly?forApproval=1");
     const data = await res.json();
     const projects: Project[] = data.projects || [];
 
@@ -53,7 +53,8 @@ export default function ResourceApprovalPage() {
       const empData = await empRes.json();
       const empPlans: EmpPlan[] = empData.plans || [];
 
-      if (empPlans.length === 0) continue; // no plans yet
+      // Still include the project even if no employee-level plans yet
+      // (project may only have dept-level plans)
 
       const totalPlanned = empPlans.reduce((s, p) => s + p.plannedHrs, 0);
       const empSet = new Set(empPlans.map((p) => p.employeeId));

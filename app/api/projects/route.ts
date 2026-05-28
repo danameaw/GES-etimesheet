@@ -14,6 +14,12 @@ export async function GET() {
       include: { manager: { select: { id: true, name: true, employeeId: true } } },
     }),
     prisma.taskCode.findMany({ where: { isActive: true }, orderBy: { code: "asc" } }),
+    // Ensure task code 1001 Leave/Holiday always exists
+    prisma.taskCode.upsert({
+      where: { code: "1001" },
+      update: { isActive: true },
+      create: { code: "1001", name: "Leave/Holiday", category: "Leave", isActive: true },
+    }),
   ]);
 
   return NextResponse.json({ projects, taskCodes });

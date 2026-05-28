@@ -21,11 +21,6 @@ function weekRange(weekStart: Date) {
   };
 }
 
-// Map UTC day-of-week (0=Sun…6=Sat) to TimesheetEntry field name
-const DAY_FIELDS: Record<number, string> = {
-  1: "monHrs", 2: "tueHrs", 3: "wedHrs",
-  4: "thuHrs", 5: "friHrs", 6: "satHrs", 0: "sunHrs",
-};
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -84,29 +79,6 @@ export async function POST(req: NextRequest) {
   const weDate = weekEnd.length === 10
     ? new Date(weekEnd + "T00:00:00.000Z")
     : new Date(weekEnd);
-
-  // ── Fetch holidays for this week ──
-  const weekEndDate = new Date(wsDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const holidays = await prisma.holiday.findMany({
-    where: { date: { gte: wsDate, lt: weekEndDate } },
-  });
-
-  // Build set of holiday field names (monHrs, tueHrs, etc.) for this week
-  const holidayFields = new Set<string>();
-  for (const h of holidays) {
-    const utcDay = new Date(h.date).getUTCDay();
-    const field  = DAY_FIELDS[utcDay];
-    if (field) holidayFields.add(field);
-  }
-
-  // Silently zero out any hours on holiday days (handles timesheets filled before holidays were set)
-  if (holidayFields.size > 0 && entries) {
-    for (const e of entries) {
-      for (const field of Array.from(holidayFields)) {
-        e[field] = 0; // zero out rather than blocking — protects data integrity gracefully
-      }
-    }
-  }
 
   // Find existing timesheet
   let timesheet = await prisma.timesheet.findFirst({
