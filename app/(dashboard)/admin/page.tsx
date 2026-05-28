@@ -18,6 +18,7 @@ interface ProjectRow {
 }
 interface Summary {
   total: number; submitted: number; draft: number; missing: number; weekStart: string; weekEnd: string;
+  weekCapacity: number; // holiday-adjusted weekly hours ceiling (default 40)
 }
 
 export default function AdminPage() {
@@ -238,7 +239,8 @@ export default function AdminPage() {
                 {filtered.length === 0 ? (
                   <tr><td colSpan={isPD ? 9 : 8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
                 ) : filtered.map((emp) => {
-                  const util = Math.round((emp.totalHrs / 40) * 100);
+                  const capacity = summary?.weekCapacity ?? 40;
+                  const util = capacity > 0 ? Math.round((emp.totalHrs / capacity) * 100) : 0;
                   const isSelected = emp.timesheetId ? selectedIds.has(emp.timesheetId) : false;
                   return (
                     <tr key={emp.id} className={isSelected ? "bg-amber-50" : ""}>
@@ -255,7 +257,7 @@ export default function AdminPage() {
                       <td className="font-medium">{emp.name}</td>
                       <td className="text-gray-600 text-xs">{emp.department}</td>
                       <td className="text-center font-semibold">
-                        <span className={emp.totalHrs >= 40 ? "text-green-700" : emp.totalHrs > 0 ? "text-amber-600" : "text-gray-400"}>
+                        <span className={emp.totalHrs >= capacity ? "text-green-700" : emp.totalHrs > 0 ? "text-amber-600" : "text-gray-400"}>
                           {emp.totalHrs > 0 ? `${emp.totalHrs}h` : "–"}
                         </span>
                       </td>
@@ -270,6 +272,7 @@ export default function AdminPage() {
                           </div>
                         )}
                       </td>
+
                       <td className="text-center"><StatusBadge status={emp.status} /></td>
                       <td className="text-xs text-gray-500 text-center">
                         {emp.submittedAt ? format(new Date(emp.submittedAt), "dd/MM HH:mm") : "–"}
