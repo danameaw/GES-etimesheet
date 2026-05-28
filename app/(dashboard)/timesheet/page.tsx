@@ -347,8 +347,11 @@ export default function TimesheetPage() {
                 const isSun   = weekDates[i].getDay() === 0;
                 const isHol   = isHoliday(i);
                 return (
-                  <th key={d.key} className={isHol ? "bg-red-800" : (isSat || isSun) ? "bg-blue-800" : ""}>
-                    <div>{d.short}</div>
+                  <th key={d.key} className={isHol ? "bg-red-800" : (isSat || isSun) ? "bg-blue-700" : ""}>
+                    <div className="flex items-center justify-center gap-1">
+                      {d.short}
+                      {(isSat || isSun) && !isHol && <span className="text-blue-300 text-xs font-normal">(OT)</span>}
+                    </div>
                     <div className="text-blue-200 font-normal text-xs">{format(weekDates[i], "dd/MM")}</div>
                     {isHol && <div className="text-red-200 font-normal text-xs leading-tight truncate max-w-[60px]" title={holName}>{holName}</div>}
                   </th>

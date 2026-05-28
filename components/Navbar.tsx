@@ -30,6 +30,7 @@ export default function Navbar() {
     { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM },
     { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
     { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },
+    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isPD },
     { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isPD },
     { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
     { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },

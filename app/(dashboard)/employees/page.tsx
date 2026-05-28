@@ -9,6 +9,7 @@ interface Employee {
   name: string;
   department: string;
   position: string;
+  level: string;
   role: string;
   isActive: boolean;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
@@ -27,7 +28,7 @@ const DEPARTMENTS = [
   "Safety & Environment", "Procurement", "Document Control", "Finance & Accounting", "HR & Admin",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", role: "employee", isActive: true };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", isActive: true };
 
 export default function EmployeesPage() {
   const { data: session } = useSession();
@@ -71,6 +72,7 @@ export default function EmployeesPage() {
       name: emp.name,
       department: emp.department,
       position: emp.position,
+      level: emp.level || "",
       role: emp.role,
       isActive: emp.isActive,
     });
@@ -200,8 +202,8 @@ export default function EmployeesPage() {
                 <th className="text-left">ชื่อ-นามสกุล</th>
                 <th className="text-left">แผนก</th>
                 <th className="text-left">ตำแหน่ง</th>
+                <th className="text-left">Level</th>
                 <th>Role</th>
-                <th>โครงการที่ดูแล</th>
                 <th>สถานะ</th>
                 <th>จัดการ</th>
               </tr>
@@ -209,18 +211,19 @@ export default function EmployeesPage() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
+
               ) : filtered.map((emp) => (
                 <tr key={emp.id} className={!emp.isActive ? "opacity-50" : ""}>
                   <td className="font-mono text-xs font-semibold text-blue-900">{emp.employeeId}</td>
                   <td className="font-medium">{emp.name}</td>
                   <td className="text-xs text-gray-600">{emp.department}</td>
                   <td className="text-xs text-gray-600">{emp.position}</td>
-                  <td className="text-center">{roleBadge(emp.role)}</td>
-                  <td className="text-center text-xs text-gray-500">
-                    {emp.managedProjects.length > 0 ? (
-                      <span className="text-blue-700 font-medium">{emp.managedProjects.length} โครงการ</span>
-                    ) : "-"}
+                  <td className="text-xs">
+                    {emp.level
+                      ? <span className="bg-purple-100 text-purple-800 font-medium px-2 py-0.5 rounded-full">{emp.level}</span>
+                      : <span className="text-gray-300">—</span>}
                   </td>
+                  <td className="text-center">{roleBadge(emp.role)}</td>
                   <td className="text-center">
                     {emp.isActive
                       ? <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Active</span>

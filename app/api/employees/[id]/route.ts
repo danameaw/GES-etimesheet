@@ -6,12 +6,25 @@ import { authOptions } from "@/lib/auth";
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const role = (session.user as any).role;
+  // PD can only update level; admin can update everything
+  if (!["admin", "pd"].includes(role))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role, isActive } = body;
+  const { employeeId, name, department, position, role: empRole, isActive, level } = body;
 
-  // Check duplicate ID (excluding self)
+  // PD can ONLY change level
+  if (role === "pd") {
+    const employee = await prisma.employee.update({
+      where: { id: params.id },
+      data: { level: level !== undefined ? String(level) : undefined },
+    });
+    return NextResponse.json({ employee });
+  }
+
+  // Admin: full update
   if (employeeId) {
     const dup = await prisma.employee.findFirst({
       where: { employeeId: employeeId.trim().toUpperCase(), NOT: { id: params.id } },
@@ -26,8 +39,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ...(name && { name: name.trim() }),
       ...(department && { department: department.trim() }),
       ...(position && { position: position.trim() }),
-      ...(role && { role }),
+      ...(empRole && { role: empRole }),
       ...(isActive !== undefined && { isActive }),
+      ...(level !== undefined && { level: String(level) }),
     },
   });
 
@@ -43,7 +57,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Soft delete — deactivate only
   const employee = await prisma.employee.update({
     where: { id: params.id },
     data: { isActive: false },

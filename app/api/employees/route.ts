@@ -6,10 +6,12 @@ import { authOptions } from "@/lib/auth";
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const role = (session.user as any).role;
+  if (!["admin", "pd"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const employees = await prisma.employee.findMany({
-    orderBy: [{ department: "asc" }, { name: "asc" }],
+    where: { isActive: true },
+    orderBy: [{ employeeId: "asc" }],
     include: {
       managedProjects: { select: { id: true, projectNumber: true, projectName: true } },
     },
