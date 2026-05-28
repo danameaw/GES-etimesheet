@@ -86,12 +86,13 @@ export default function TimesheetPage() {
   const holidayName = (dayIndex: number) =>
     holidays.find((h) => h.date.slice(0, 10) === weekDateStrings[dayIndex])?.name;
 
-  // Count working-day holidays (Mon–Fri) in this week
-  const weekHolidayCount = weekDates.filter((d, i) => {
-    const dow = d.getDay(); // 0=Sun, 6=Sat
-    return dow >= 1 && dow <= 5 && isHoliday(i);
-  }).length;
-  const weekCapacity = 40 - weekHolidayCount * 8;
+  // Weekday holidays (Mon–Fri) — for notice display
+  const weekdayHolidays = weekDates
+    .map((d, i) => ({ date: d, index: i, name: holidayName(i) }))
+    .filter(({ date, index }) => {
+      const dow = date.getDay();
+      return dow >= 1 && dow <= 5 && isHoliday(index);
+    });
 
   // Fetch projects and task codes
   useEffect(() => {
@@ -230,19 +231,71 @@ export default function TimesheetPage() {
         </div>
       </div>
 
-      {/* Holiday notice for this week */}
+      {/* ── Holiday Notice ── */}
       {holidays.length > 0 && (
-        <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800 flex items-start gap-2">
-          <span className="text-base">🏖️</span>
-          <div>
-            <span className="font-semibold">วันหยุดสัปดาห์นี้: </span>
-            {holidays.map((h, i) => (
-              <span key={h.id}>{i > 0 ? " · " : ""}<strong>{h.name}</strong> ({format(new Date(h.date.slice(0,10) + "T00:00:00"), "dd MMM")})</span>
-            ))}
-            {weekHolidayCount > 0 && (
-              <span className="ml-2 text-red-600">— เพดานสัปดาห์นี้: <strong>{weekCapacity}h</strong></span>
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+          {/* Header bar */}
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-red-100 border-b border-red-200">
+            <span className="text-lg">🏖️</span>
+            <span className="font-semibold text-red-800 text-sm">
+              วันหยุดในสัปดาห์นี้ ({holidays.length} วัน)
+            </span>
+            {weekdayHolidays.length > 0 && (
+              <span className="ml-auto text-xs text-red-600 font-medium bg-red-200 px-2.5 py-0.5 rounded-full">
+                กรุณาลง Leave/Holiday (1001) ในวันหยุด
+              </span>
             )}
           </div>
+
+          {/* Holiday cards */}
+          <div className="flex flex-wrap gap-3 p-4">
+            {holidays.map((h) => {
+              const d    = new Date(h.date.slice(0, 10) + "T00:00:00");
+              const dow  = d.getDay();
+              const DAY_TH = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
+              const isWeekend = dow === 0 || dow === 6;
+              return (
+                <div key={h.id}
+                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm font-medium shadow-sm ${
+                    isWeekend
+                      ? "bg-white border-gray-200 text-gray-600"
+                      : "bg-red-600 border-red-700 text-white"
+                  }`}>
+                  <div className="text-center leading-tight">
+                    <div className={`text-xs font-normal ${isWeekend ? "text-gray-400" : "text-red-200"}`}>
+                      {DAY_TH[dow]}
+                    </div>
+                    <div className="text-xl font-bold leading-none">{format(d, "d")}</div>
+                    <div className={`text-xs ${isWeekend ? "text-gray-400" : "text-red-200"}`}>
+                      {format(d, "MMM")}
+                    </div>
+                  </div>
+                  <div>
+                    <div>{h.name}</div>
+                    {!isWeekend && (
+                      <div className="text-xs font-normal text-red-200 mt-0.5">
+                        ลง: 1001 Leave/Holiday
+                      </div>
+                    )}
+                    {isWeekend && (
+                      <div className="text-xs font-normal text-gray-400 mt-0.5">วันหยุดสุดสัปดาห์</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Footer hint */}
+          {weekdayHolidays.length > 0 && (
+            <div className="px-4 pb-3 text-xs text-red-600 flex items-center gap-1.5">
+              <span>💡</span>
+              <span>
+                สำหรับวันหยุดทำการ (<strong>{weekdayHolidays.map((h) => format(h.date, "EEE dd MMM")).join(", ")}</strong>)
+                — ลงชั่วโมง <strong>8h</strong> ด้วย task code <strong>1001 Leave/Holiday</strong> เพื่อให้ยอดครบ 40h
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -394,7 +447,7 @@ export default function TimesheetPage() {
                 );
               })}
               <td className={`text-center font-bold text-base ${
-                totalWeekHrs >= weekCapacity ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
+                totalWeekHrs >= 40 ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
               }`}>
                 {totalWeekHrs > 0 ? totalWeekHrs : "-"}
               </td>
@@ -413,10 +466,14 @@ export default function TimesheetPage() {
             </button>
           )}
           <span className="text-sm text-gray-500">
-            Week total: <span className={`font-bold ${totalWeekHrs >= weekCapacity ? "text-green-700" : "text-amber-600"}`}>
+            Week total: <span className={`font-bold ${totalWeekHrs >= 40 ? "text-green-700" : "text-amber-600"}`}>
               {totalWeekHrs}h
-            </span> / {weekCapacity}h
-            {weekHolidayCount > 0 && <span className="text-xs text-red-500 ml-1">(−{weekHolidayCount} วันหยุด)</span>}
+            </span> / 40h
+            {weekdayHolidays.length > 0 && (
+              <span className="text-xs text-red-500 ml-1">
+                ({weekdayHolidays.length} วันหยุด — ลง 1001 Leave/Holiday)
+              </span>
+            )}
           </span>
         </div>
 
