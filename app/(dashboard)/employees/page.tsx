@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 
 interface Employee {
   id: string;
@@ -13,6 +14,17 @@ interface Employee {
   role: string;
   isActive: boolean;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
+}
+
+interface ImportRow {
+  rowNum: number;
+  employeeId: string;
+  name: string;
+  department: string;
+  position: string;
+  level: string;
+  role: string;
+  errors: string[];
 }
 
 const ROLES = [
@@ -40,12 +52,20 @@ export default function EmployeesPage() {
   const [filterRole, setFilterRole] = useState("all");
   const [showInactive, setShowInactive] = useState(false);
 
-  // Modal state
+  // Add/Edit modal
   const [modal, setModal] = useState<"add" | "edit" | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Import modal
+  const [importModal, setImportModal] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ created: number; errors: string[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = (session?.user as any)?.role === "admin";
   useEffect(() => { if (session && !isAdmin) router.push("/timesheet"); }, [session, isAdmin, router]);
@@ -123,6 +143,109 @@ export default function EmployeesPage() {
     load();
   }
 
+  // ─── Excel Import ─────────────────────────────────────────────────────────
+
+  function downloadTemplate() {
+    const wb = XLSX.utils.book_new();
+
+    // Data sheet
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["employeeId", "name", "department", "position", "level", "role"],
+      ["GES001", "Somchai Prasertphon", "Process Engineering", "Process Engineer", "Engineer I", "employee"],
+    ]);
+    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Employees");
+
+    // Instructions sheet
+    const inst = XLSX.utils.aoa_to_sheet([
+      ["Column", "Required", "Valid Values / Notes"],
+      ["employeeId", "Yes", "Unique code e.g. GES001"],
+      ["name", "Yes", "Full name in English"],
+      ["department", "Yes", DEPARTMENTS.join(", ")],
+      ["position", "Yes", "Job title e.g. Process Engineer"],
+      ["level", "No", "e.g. Engineer I, Senior Engineer II"],
+      ["role", "No", "employee | pm | pd | admin  (default: employee)"],
+    ]);
+    inst["!cols"] = [{ wch: 14 }, { wch: 10 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, inst, "Instructions");
+
+    XLSX.writeFile(wb, "employee_import_template.xlsx");
+  }
+
+  function parseExcel(file: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target!.result as ArrayBuffer);
+      const wb = XLSX.read(data, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      const existingIds = new Set(employees.map((emp) => emp.employeeId));
+
+      const rows: ImportRow[] = raw.map((r, i) => {
+        const empId = String(r.employeeId || "").trim().toUpperCase();
+        const errs: string[] = [];
+        if (!empId) errs.push("employeeId ว่าง");
+        else if (existingIds.has(empId)) errs.push("Employee ID ซ้ำในระบบ");
+        if (!r.name) errs.push("name ว่าง");
+        if (!r.department) errs.push("department ว่าง");
+        else if (!DEPARTMENTS.includes(r.department)) errs.push(`department "${r.department}" ไม่ถูกต้อง`);
+        if (!r.position) errs.push("position ว่าง");
+        const role = String(r.role || "").toLowerCase();
+        if (role && !["employee", "pm", "pd", "admin"].includes(role)) errs.push(`role "${r.role}" ไม่ถูกต้อง`);
+        return {
+          rowNum: i + 2,
+          employeeId: empId,
+          name: String(r.name || ""),
+          department: String(r.department || ""),
+          position: String(r.position || ""),
+          level: String(r.level || ""),
+          role: role || "employee",
+          errors: errs,
+        };
+      });
+      setImportRows(rows);
+      setImportResult(null);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function handleFileDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) parseExcel(file);
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) parseExcel(file);
+    e.target.value = "";
+  }
+
+  async function handleImport() {
+    const validRows = importRows.filter((r) => r.errors.length === 0);
+    if (validRows.length === 0) return;
+    setImporting(true);
+    const res = await fetch("/api/employees/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: validRows }),
+    });
+    const data = await res.json();
+    setImporting(false);
+    setImportResult(data);
+    load();
+  }
+
+  function closeImport() {
+    setImportModal(false);
+    setImportRows([]);
+    setImportResult(null);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const departments = ["all", ...Array.from(new Set(employees.map((e) => e.department))).sort()];
 
   const filtered = employees.filter((e) => {
@@ -130,7 +253,8 @@ export default function EmployeesPage() {
     if (filterDept !== "all" && e.department !== filterDept) return false;
     if (filterRole !== "all" && e.role !== filterRole) return false;
     if (search && !e.name.toLowerCase().includes(search.toLowerCase()) &&
-        !e.employeeId.toLowerCase().includes(search.toLowerCase())) return false;
+        !e.employeeId.toLowerCase().includes(search.toLowerCase()) &&
+        !e.position.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
@@ -141,6 +265,9 @@ export default function EmployeesPage() {
 
   if (!isAdmin) return null;
 
+  const validCount = importRows.filter((r) => r.errors.length === 0).length;
+  const errorCount = importRows.filter((r) => r.errors.length > 0).length;
+
   return (
     <div>
       {/* Header */}
@@ -149,9 +276,17 @@ export default function EmployeesPage() {
           <h1 className="text-2xl font-bold text-gray-900">จัดการพนักงาน</h1>
           <p className="text-gray-500 text-sm">เพิ่ม / แก้ไข / ปิดใช้งานบัญชีพนักงาน</p>
         </div>
-        <button onClick={openAdd} className="ges-btn-primary flex items-center gap-2">
-          <span className="text-lg leading-none">+</span> เพิ่มพนักงาน
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setImportModal(true); setImportRows([]); setImportResult(null); }}
+            className="ges-btn-secondary flex items-center gap-2"
+          >
+            <span>📥</span> Import Excel
+          </button>
+          <button onClick={openAdd} className="ges-btn-primary flex items-center gap-2">
+            <span className="text-lg leading-none">+</span> เพิ่มพนักงาน
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -171,7 +306,7 @@ export default function EmployeesPage() {
       <div className="flex flex-wrap gap-3 mb-4">
         <input
           type="text"
-          placeholder="ค้นหาชื่อหรือรหัสพนักงาน..."
+          placeholder="ค้นหาชื่อ / รหัสพนักงาน / ตำแหน่ง..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="ges-input max-w-xs"
@@ -211,7 +346,6 @@ export default function EmployeesPage() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
-
               ) : filtered.map((emp) => (
                 <tr key={emp.id} className={!emp.isActive ? "opacity-50" : ""}>
                   <td className="font-mono text-xs font-semibold text-blue-900">{emp.employeeId}</td>
@@ -252,7 +386,7 @@ export default function EmployeesPage() {
         )}
       </div>
 
-      {/* Modal */}
+      {/* Add/Edit Modal */}
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -322,7 +456,6 @@ export default function EmployeesPage() {
                   <label htmlFor="isActive" className="text-sm text-gray-700">บัญชีใช้งานได้ (Active)</label>
                 </div>
               )}
-
               {formError && (
                 <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-2">
                   {formError}
@@ -334,6 +467,124 @@ export default function EmployeesPage() {
               <button onClick={handleSave} disabled={saving} className="ges-btn-primary">
                 {saving ? "กำลังบันทึก…" : modal === "add" ? "เพิ่มพนักงาน" : "บันทึก"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Excel Modal */}
+      {importModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Import พนักงานจาก Excel</h2>
+              <button onClick={closeImport} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            </div>
+
+            <div className="p-6 flex-1 overflow-y-auto space-y-4">
+              {/* Drop zone */}
+              {!importResult && (
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleFileDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
+                    dragOver ? "border-blue-500 bg-blue-50" : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
+                  }`}
+                >
+                  <p className="text-4xl mb-2">📂</p>
+                  <p className="text-gray-600 font-medium">Drag & drop ไฟล์ Excel ที่นี่</p>
+                  <p className="text-gray-400 text-sm mt-1">หรือคลิกเพื่อเลือกไฟล์ (.xlsx, .xls)</p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={handleFileSelect}
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-between items-center">
+                <button onClick={downloadTemplate} className="ges-btn-secondary text-sm flex items-center gap-2">
+                  <span>⬇️</span> Download Template
+                </button>
+                {importRows.length > 0 && !importResult && (
+                  <span className="text-sm text-gray-500">
+                    พบ {importRows.length} แถว —{" "}
+                    <span className="text-green-600 font-medium">{validCount} valid</span>
+                    {errorCount > 0 && <>, <span className="text-red-600 font-medium">{errorCount} มี error</span></>}
+                  </span>
+                )}
+              </div>
+
+              {/* Import result */}
+              {importResult && (
+                <div className={`rounded-xl p-4 ${importResult.errors.length === 0 ? "bg-green-50 border border-green-200" : "bg-yellow-50 border border-yellow-200"}`}>
+                  <p className="font-semibold text-gray-800">นำเข้าสำเร็จ {importResult.created} รายการ</p>
+                  {importResult.errors.length > 0 && (
+                    <ul className="mt-2 text-sm text-red-700 space-y-1 list-disc list-inside">
+                      {importResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* Preview table */}
+              {importRows.length > 0 && !importResult && (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                  <table className="ges-table w-full text-xs">
+                    <thead>
+                      <tr>
+                        <th className="text-center w-10">แถว</th>
+                        <th>Employee ID</th>
+                        <th>ชื่อ</th>
+                        <th>แผนก</th>
+                        <th>ตำแหน่ง</th>
+                        <th>Level</th>
+                        <th>Role</th>
+                        <th>สถานะ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importRows.map((row) => (
+                        <tr key={row.rowNum} className={row.errors.length > 0 ? "bg-red-50" : "bg-green-50"}>
+                          <td className="text-center text-gray-400">{row.rowNum}</td>
+                          <td className="font-mono font-semibold">{row.employeeId || "—"}</td>
+                          <td>{row.name || "—"}</td>
+                          <td>{row.department || "—"}</td>
+                          <td>{row.position || "—"}</td>
+                          <td>{row.level || "—"}</td>
+                          <td>{row.role || "—"}</td>
+                          <td>
+                            {row.errors.length === 0 ? (
+                              <span className="text-green-700 font-medium">✓ OK</span>
+                            ) : (
+                              <span className="text-red-600" title={row.errors.join(", ")}>
+                                ✗ {row.errors.join(", ")}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 flex justify-end gap-3 border-t border-gray-100 pt-4">
+              <button onClick={closeImport} className="ges-btn-secondary">ปิด</button>
+              {importRows.length > 0 && !importResult && (
+                <button
+                  onClick={handleImport}
+                  disabled={importing || validCount === 0}
+                  className="ges-btn-primary"
+                >
+                  {importing ? "กำลัง Import…" : `Import ${validCount} รายการ`}
+                </button>
+              )}
             </div>
           </div>
         </div>
