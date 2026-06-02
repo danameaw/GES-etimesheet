@@ -35,9 +35,8 @@ const ROLES = [
 ];
 
 const DEPARTMENTS = [
-  "Management", "Project Management", "Process Engineering", "Mechanical Engineering",
-  "Civil & Structural", "Electrical Engineering", "Instrumentation", "Piping Engineering",
-  "Safety & Environment", "Procurement", "Document Control", "Finance & Accounting", "HR & Admin",
+  "Management", "Project Management", "Engineering", "Construction",
+  "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
 const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", isActive: true };
