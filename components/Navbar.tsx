@@ -28,7 +28,7 @@ export default function Navbar() {
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
     { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM },
-    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
+    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPM },
     { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },
     { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isPD },
     { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isPD },

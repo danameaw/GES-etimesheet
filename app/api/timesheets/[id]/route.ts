@@ -8,14 +8,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const role = (session.user as any).role;
-  if (!["admin", "pd"].includes(role)) {
+  if (!["admin", "pm"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { action } = await req.json();
 
   if (action === "unlock") {
-    // Admin AND PD can unlock
+    // Admin AND PM can unlock
     await prisma.timesheet.update({
       where: { id: params.id },
       data: { status: "draft", submittedAt: null },
@@ -31,9 +31,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   if (action === "approve") {
-    // ONLY PD can approve timesheets
-    if (role !== "pd") {
-      return NextResponse.json({ error: "Only PD can approve timesheets" }, { status: 403 });
+    // ONLY PM can approve timesheets
+    if (role !== "pm") {
+      return NextResponse.json({ error: "Only PM can approve timesheets" }, { status: 403 });
     }
     await prisma.timesheet.update({
       where: { id: params.id },
