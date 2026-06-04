@@ -14,20 +14,41 @@ function weekRange(wStart: Date) {
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const role = (session.user as any).role;
-  if (!["ges_management", "admin", "md"].includes(role))
+  const role    = (session.user as any).role;
+  const empDbId = (session.user as any).id;
+  if (!["ges_management", "admin", "md", "pd"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const weekParam  = searchParams.get("week");
   const monthParam = searchParams.get("month");
   const projectId  = searchParams.get("projectId") || "";
-  const deptFilter = searchParams.get("dept") || "";
   const mode       = monthParam ? "month" : "week";
 
-  // ── All active projects for selector ──
+  // ── Role-based auto-filters ──────────────────────────────────────────────
+  // GES Management: filter to own department automatically
+  let deptFilter = searchParams.get("dept") || "";
+  if (role === "ges_management" && !deptFilter) {
+    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { department: true } });
+    deptFilter = me?.department ?? "";
+  }
+
+  // PD: restrict to own projects
+  let pdProjectIds: string[] | null = null;
+  if (role === "pd") {
+    const pdProjs = await prisma.project.findMany({
+      where: { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] },
+      select: { id: true },
+    });
+    pdProjectIds = pdProjs.map((p) => p.id);
+  }
+
+  // ── All active projects for selector (filtered by role) ──
   const allProjects = await prisma.project.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(pdProjectIds ? { id: { in: pdProjectIds } } : {}),
+    },
     select: { id: true, projectNumber: true, projectName: true },
     orderBy: { projectNumber: "asc" },
   });
@@ -47,6 +68,8 @@ export async function GET(req: NextRequest) {
   const tsWhere: any = { status: { in: ["submitted", "approved"] } };
   if (Object.keys(dateFilter).length) tsWhere.weekStart = dateFilter;
   if (projectId) tsWhere.entries = { some: { projectId } };
+  else if (pdProjectIds) tsWhere.entries = { some: { projectId: { in: pdProjectIds } } };
+  if (deptFilter) tsWhere.employee = { department: deptFilter };
 
   const allTS = await prisma.timesheet.findMany({
     where: tsWhere,
@@ -74,7 +97,8 @@ export async function GET(req: NextRequest) {
   const actualByProj = new Map<string, number>();
   for (const e of entries) actualByProj.set(e.projectId, (actualByProj.get(e.projectId) || 0) + e.totalHrs);
 
-  const planWhere: any = projectId ? { projectId } : {};
+  const planWhere: any = projectId ? { projectId }
+    : pdProjectIds ? { projectId: { in: pdProjectIds } } : {};
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
     Object.assign(planWhere, { year: y, month: m });
@@ -104,7 +128,9 @@ export async function GET(req: NextRequest) {
   const taskBreakdown = Array.from(catMap.entries()).map(([category, hours]) => ({ category, hours })).sort((a, b) => b.hours - a.hours);
 
   // ── 3. Utilization Trend (6 weeks) ──
-  const totalEmployees = await prisma.employee.count({ where: { isActive: true } });
+  const totalEmployees = await prisma.employee.count({
+    where: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
+  });
   const weeklyTrend: { week: string; utilization: number; totalHrs: number; capacity: number }[] = [];
   const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
 
@@ -165,7 +191,9 @@ export async function GET(req: NextRequest) {
     return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, label: `${MONTH_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}` };
   });
 
-  const matProjIds = projectId ? [projectId] : allProjects.slice(0, 12).map((p) => p.id);
+  const matProjIds = projectId ? [projectId]
+    : pdProjectIds ? pdProjectIds.slice(0, 12)
+    : allProjects.slice(0, 12).map((p) => p.id);
   const [matPlans, matActuals] = await Promise.all([
     prisma.resourcePlanEmployeeMonthly.findMany({
       where: { projectId: { in: matProjIds }, OR: matMonths.map((m) => ({ year: m.year, month: m.month })) },

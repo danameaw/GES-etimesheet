@@ -40,8 +40,14 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const canAccess = ["ges_management","admin","md"].includes(role);
+  const isPD      = role === "pd";
+  const isGESMgmt = role === "ges_management";
+  const canAccess = ["ges_management","admin","md","pd"].includes(role);
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
+
+  const dashTitle = isPD ? "Dashboard Project"
+    : isGESMgmt ? "Dashboard Department"
+    : "Dashboard";
 
   const [data, setData]           = useState<DashData | null>(null);
   const [loading, setLoading]     = useState(true);
@@ -79,8 +85,10 @@ export default function DashboardPage() {
       {/* ── Top bar ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm">ภาพรวม Resource & Timesheet</p>
+          <h1 className="text-2xl font-bold text-gray-900">{dashTitle}</h1>
+          <p className="text-gray-500 text-sm">
+            {isPD ? "ภาพรวมโครงการที่ดูแล" : isGESMgmt ? "ภาพรวม Department ของคุณ" : "ภาพรวม Resource & Timesheet"}
+          </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -111,16 +119,18 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Project selector */}
-          <select
-            value={selectedProject}
-            onChange={(e) => setSelectedProject(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[220px]">
-            <option value="">🌐 All Projects</option>
-            {(data?.allProjects || []).map((p) => (
-              <option key={p.id} value={p.id}>{p.projectNumber} – {p.projectName}</option>
-            ))}
-          </select>
+          {/* Project selector — shown for MD and PD (PD sees their own projects only) */}
+          {!isGESMgmt && (
+            <select
+              value={selectedProject}
+              onChange={(e) => setSelectedProject(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[220px]">
+              <option value="">{isPD ? "📁 All My Projects" : "🌐 All Projects"}</option>
+              {(data?.allProjects || []).map((p) => (
+                <option key={p.id} value={p.id}>{p.projectNumber} – {p.projectName}</option>
+              ))}
+            </select>
+          )}
 
           <button onClick={fetchData} className="text-xs text-gray-400 hover:text-blue-600 p-1.5 rounded hover:bg-gray-100">🔄</button>
         </div>
@@ -264,11 +274,14 @@ export default function DashboardPage() {
                 <h2 className="font-semibold text-gray-800">④ Top Employees by Hours</h2>
                 <p className="text-xs text-gray-400">{selectedProject ? "เฉพาะคนในโปรเจกต์นี้" : "พนักงานที่มีชั่วโมงมากสุด"}</p>
               </div>
-              <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
-                className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
-                <option value="">ทุกแผนก</option>
-                {data.allDepts.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
+              {/* Dept filter: hidden for PD (not relevant) and GES Management (auto-filtered) */}
+              {!isPD && !isGESMgmt && (
+                <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+                  <option value="">ทุกแผนก</option>
+                  {data.allDepts.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              )}
             </div>
             {data.topEmployees.length === 0 ? (
               <div className="h-32 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
