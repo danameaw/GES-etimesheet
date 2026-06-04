@@ -205,8 +205,8 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* ── Charts 2+3 ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+          {/* ── Charts 2+3: ซ่อนสำหรับ GES Management (ไม่เกี่ยวกับ dept view) ── */}
+          {!isGESMgmt && <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
             {/* Chart 2: Task Breakdown */}
             <div className="ges-card p-5 lg:col-span-2">
               <h2 className="font-semibold text-gray-800 mb-1">② Task Breakdown</h2>
@@ -265,7 +265,7 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* ── Chart 4: Top Employees ── */}
           <div className="ges-card p-5">
