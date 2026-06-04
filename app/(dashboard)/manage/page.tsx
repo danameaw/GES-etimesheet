@@ -202,7 +202,6 @@ function ProjectsTab() {
                 <th className="text-left">Project No.</th>
                 <th className="text-left">ชื่อโครงการ</th>
                 <th>ประเภท</th>
-                <th>PM</th>
                 <th>PD</th>
                 <th>วันเริ่ม</th>
                 <th>วันสิ้นสุด</th>
@@ -212,13 +211,12 @@ function ProjectsTab() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
               ) : filtered.map((p) => (
                 <tr key={p.id} className={!p.isActive ? "opacity-50" : ""}>
                   <td className="font-mono text-xs font-semibold text-blue-900">{p.projectNumber}</td>
                   <td className="font-medium max-w-[200px] truncate">{p.projectName}</td>
                   <td className="text-center text-xs capitalize">{p.projectType}</td>
-                  <td className="text-xs text-center">{p.manager?.name || "–"}</td>
                   <td className="text-xs text-center">{p.pd?.name || "–"}</td>
                   <td className="text-xs text-center">{p.startDate ? format(new Date(p.startDate), "dd MMM yy") : "–"}</td>
                   <td className="text-xs text-center">{p.endDate   ? format(new Date(p.endDate),   "dd MMM yy") : "–"}</td>

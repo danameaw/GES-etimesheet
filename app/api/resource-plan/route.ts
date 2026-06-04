@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   });
 
   // Fetch all active employees for dropdown (only for PM/admin)
-  const allEmployees = role !== "ges_management"
+  const allEmployees = !["ges_management", "md"].includes(role)
     ? await prisma.employee.findMany({
         where: { isActive: true },
         orderBy: [{ department: "asc" }, { name: "asc" }],
@@ -138,7 +138,7 @@ export async function PATCH(req: NextRequest) {
 
   if (action === "approve" || action === "reject") {
     // ONLY PD can approve/reject resource plans
-    if (role !== "ges_management") return NextResponse.json({ error: "Only PD can approve resource plans" }, { status: 403 });
+    if (!["ges_management", "md"].includes(role)) return NextResponse.json({ error: "Only PD can approve resource plans" }, { status: 403 });
     const newStatus = action === "approve" ? "approved" : "draft";
     await prisma.resourcePlan.updateMany({
       where: { projectId, weekStart: wsDate },
