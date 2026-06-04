@@ -262,7 +262,7 @@ export default function ResourceApprovalPage() {
 }
 
 // ── MD Project Overview (existing per-project view) ──────────────────────────
-function ProjectOverview({ year, month }: { year: number; month: number }) {
+function ProjectOverview({ year: _year, month: _month }: { year: number; month: number }) {
   const [groups,  setGroups]  = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting,  setActing]  = useState<string | null>(null);
@@ -363,7 +363,7 @@ function ProjectOverview({ year, month }: { year: number; month: number }) {
                     <tr className="bg-gray-50">
                       <th className="text-left px-4 py-2">พนักงาน</th>
                       <th className="text-left px-3 py-2">แผนก</th>
-                      {months.map((m) => (
+                      {months.map((m: { year: number; month: number }) => (
                         <th key={`${m.year}-${m.month}`} className="px-2 py-2 text-center text-gray-500">
                           {MONTH_NAMES_EN[m.month-1]}<br/>{m.year}
                         </th>
