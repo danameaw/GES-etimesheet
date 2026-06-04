@@ -8,7 +8,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const role = (session.user as any).role;
-  if (!["admin", "pm"].includes(role)) {
+  if (!["admin", "pd", "md"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -32,7 +32,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (action === "approve") {
     // ONLY PM can approve timesheets
-    if (role !== "pm") {
+    if (role !== "pd" && role !== "md") {
       return NextResponse.json({ error: "Only PM can approve timesheets" }, { status: 403 });
     }
     await prisma.timesheet.update({

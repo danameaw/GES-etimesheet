@@ -27,7 +27,7 @@ export default function ResourceApprovalPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const canAccess = ["pd", "admin"].includes(role);
+  const canAccess = ["ges_management", "admin", "md"].includes(role);
 
   const [groups, setGroups]   = useState<ProjectGroup[]>([]);
   const [loading, setLoading] = useState(true);

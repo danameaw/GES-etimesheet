@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "admin"].includes(role))
+  if (!["pd", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Parse multipart form
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing file or projectId" }, { status: 400 });
 
   // Verify PM owns the project (skip for admin)
-  if (role === "pm") {
+  if (role === "pd") {
     const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
     if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }

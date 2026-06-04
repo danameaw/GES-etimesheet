@@ -20,7 +20,7 @@ function monthsBetween(start: Date, end: Date) {
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["pm", "admin"].includes((session.user as any).role))
+  if (!["pd", "admin", "md"].includes((session.user as any).role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);

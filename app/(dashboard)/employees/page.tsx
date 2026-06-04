@@ -29,9 +29,10 @@ interface ImportRow {
 
 const ROLES = [
   { value: "employee", label: "Employee",        color: "bg-gray-100 text-gray-700" },
-  { value: "pm",       label: "Project Manager", color: "bg-blue-100 text-blue-700" },
-  { value: "pd",       label: "Project Director",color: "bg-purple-100 text-purple-700" },
+  { value: "pd",       label: "Project Director", color: "bg-blue-100 text-blue-700" },
+  { value: "ges_management", label: "GES Management", color: "bg-purple-100 text-purple-700" },
   { value: "admin",    label: "Admin",            color: "bg-red-100 text-red-700" },
+  { value: "md",          label: "MD",               color: "bg-rose-100 text-rose-700" },
 ];
 
 const DEPARTMENTS = [
@@ -191,7 +192,7 @@ export default function EmployeesPage() {
         else if (!DEPARTMENTS.includes(r.department)) errs.push(`department "${r.department}" ไม่ถูกต้อง`);
         if (!r.position) errs.push("position ว่าง");
         const role = String(r.role || "").toLowerCase();
-        if (role && !["employee", "pm", "pd", "admin"].includes(role)) errs.push(`role "${r.role}" ไม่ถูกต้อง`);
+        if (role && !["employee", "pd", "ges_management", "admin", "md"].includes(role)) errs.push(`role "${r.role}" ไม่ถูกต้อง`);
         return {
           rowNum: i + 2,
           employeeId: empId,

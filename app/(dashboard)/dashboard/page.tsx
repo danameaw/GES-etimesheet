@@ -40,7 +40,7 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const canAccess = ["pd","admin"].includes(role);
+  const canAccess = ["ges_management","admin","md"].includes(role);
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
   const [data, setData]           = useState<DashData | null>(null);

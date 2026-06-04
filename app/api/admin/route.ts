@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const role = (session.user as any).role;
-  if (!["admin", "pm"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd", "md"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const weekParam = searchParams.get("week");

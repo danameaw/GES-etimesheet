@@ -7,9 +7,9 @@ async function main() {
   const employees = [
     { employeeId: "GES001", name: "Somchai Prasertphon",    department: "Management",            position: "Managing Director",          role: "admin" },
     { employeeId: "GES002", name: "Wanchai Srisuwan",       department: "Management",            position: "Deputy Managing Director",   role: "admin" },
-    { employeeId: "GES003", name: "Pichit Boonrod",         department: "Project Management",    position: "Project Director",           role: "pd" },
-    { employeeId: "GES004", name: "Sunisa Mahakhan",        department: "Project Management",    position: "Project Manager",            role: "pm" },
-    { employeeId: "GES005", name: "Nopporn Thamrongsak",    department: "Project Management",    position: "Project Manager",            role: "pm" },
+    { employeeId: "GES003", name: "Pichit Boonrod",         department: "Project Management",    position: "Project Director",           role: "ges_management" },
+    { employeeId: "GES004", name: "Sunisa Mahakhan",        department: "Project Management",    position: "Project Manager",            role: "pd" },
+    { employeeId: "GES005", name: "Nopporn Thamrongsak",    department: "Project Management",    position: "Project Manager",            role: "pd" },
     { employeeId: "GES006", name: "Nattapong Rattanakul",   department: "Process Engineering",   position: "Senior Process Engineer",    role: "employee" },
     { employeeId: "GES007", name: "Siriporn Thaweekiat",    department: "Process Engineering",   position: "Process Engineer",           role: "employee" },
     { employeeId: "GES008", name: "Prayuth Chalermpong",    department: "Mechanical Engineering",position: "Senior Mechanical Engineer", role: "employee" },

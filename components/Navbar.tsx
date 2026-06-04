@@ -4,37 +4,41 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const ROLE_LABELS: Record<string, string> = {
-  employee: "Employee",
-  pm: "Project Manager",
-  pd: "Project Director",
-  admin: "Admin",
+  employee:       "Employee",
+  pd:             "Project Director",
+  ges_management: "GES Management",
+  admin:          "Admin",
+  md:             "MD",
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  employee: "text-blue-200",
-  pm: "text-cyan-300",
-  pd: "text-purple-300",
-  admin: "text-amber-300",
+  employee:       "text-blue-200",
+  pd:             "text-cyan-300",
+  ges_management: "text-purple-300",
+  admin:          "text-amber-300",
+  md:             "text-rose-300",
 };
 
 export default function Navbar() {
   const { data: session } = useSession();
   const pathname = usePathname();
   const role = (session?.user as any)?.role ?? "employee";
-  const isAdmin = role === "admin";
-  const isPM = role === "pm";
-  const isPD = role === "pd";
+
+  const isAdmin   = role === "admin";
+  const isPD      = role === "pd";             // Project Director (เดิม PM)
+  const isGESMgmt = role === "ges_management"; // GES Management (เดิม PD)
+  const isMD      = role === "md";             // Managing Director (ใหม่)
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
-    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPM },
-    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPM },
-    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isPD },
-    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isPD },
-    { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isPD },
-    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
-    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
-    { href: "/manage",                  label: "Manage",         icon: "⚙️", show: isAdmin },
+    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD || isGESMgmt || isMD },
+    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD || isMD },
+    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt || isMD },
+    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD },
+    { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isGESMgmt || isMD },
+    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin || isMD },
+    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin || isMD },
+    { href: "/manage",                  label: "Manage",         icon: "⚙️", show: isAdmin || isMD },
   ];
 
   return (
@@ -55,13 +59,12 @@ export default function Navbar() {
           {/* Nav Links */}
           <div className="flex items-center gap-0.5">
             {navLinks.filter((l) => l.show).map((link) => {
-              // Exact match for /admin to avoid highlighting when on /admin/edit etc.
-            const active = link.href === "/admin"
-              ? pathname === "/admin"
-              : pathname.startsWith(link.href);
+              const active = link.href === "/admin"
+                ? pathname === "/admin"
+                : pathname.startsWith(link.href);
               return (
                 <Link
-                  key={link.href}
+                  key={link.label}
                   href={link.href}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                     active

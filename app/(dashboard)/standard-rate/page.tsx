@@ -26,7 +26,7 @@ export default function StandardRatePage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const canAccess = role === "pd";
+  const canAccess = role === "md";
 
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 

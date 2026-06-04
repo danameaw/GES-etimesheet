@@ -9,14 +9,14 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   const role = (session.user as any).role;
   // PD can only update level; admin can update everything
-  if (!["admin", "pd"].includes(role))
+  if (!["admin", "ges_management", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
   const { employeeId, name, department, position, role: empRole, isActive, level } = body;
 
   // PD can ONLY change level
-  if (role === "pd") {
+  if (role === "ges_management") {
     const employee = await prisma.employee.update({
       where: { id: params.id },
       data: { level: level !== undefined ? String(level) : undefined },

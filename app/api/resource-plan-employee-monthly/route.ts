@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
-  if (!["pm", "pd", "admin"].includes(role))
+  if (!["pd", "ges_management", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "admin"].includes(role))
+  if (!["pd", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pm" && proj.managerId !== empDbId)
+  if (role === "pd" && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")
@@ -102,7 +102,7 @@ export async function DELETE(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "admin"].includes(role))
+  if (!["pd", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -116,7 +116,7 @@ export async function DELETE(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pm" && proj.managerId !== empDbId)
+  if (role === "pd" && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")

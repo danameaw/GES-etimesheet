@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/auth";
 async function requirePdOrAdmin(session: any) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
-  if (!["pd", "admin"].includes(role))
+  if (!["md"].includes(role))
     return NextResponse.json({ error: "PD or Admin only" }, { status: 403 });
   return null;
 }

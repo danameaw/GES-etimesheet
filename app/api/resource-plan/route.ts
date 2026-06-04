@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const empDbId = (session.user as any).id;
 
   // PM, admin: manage own projects | pd: read all for approval
-  if (!["pm", "admin", "pd"].includes(role)) {
+  if (!["pd", "admin", "ges_management", "md"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   // Determine which projects this user can see
   // PD and admin see all projects; PM only sees their own
-  const projectWhere = role === "pm" ? { managerId: empDbId } : {};
+  const projectWhere = role === "pd" ? { managerId: empDbId } : {};
   const myProjects = await prisma.project.findMany({
     where: { ...projectWhere, isActive: true },
     include: { manager: { select: { id: true, name: true, employeeId: true } } },
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   });
 
   // Fetch all active employees for dropdown (only for PM/admin)
-  const allEmployees = role !== "pd"
+  const allEmployees = role !== "ges_management"
     ? await prisma.employee.findMany({
         where: { isActive: true },
         orderBy: [{ department: "asc" }, { name: "asc" }],
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   const role = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "admin"].includes(role)) {
+  if (!["pd", "admin", "md"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -115,7 +115,7 @@ export async function PATCH(req: NextRequest) {
 
   const role = (session.user as any).role;
 
-  if (!["pm", "admin", "pd"].includes(role)) {
+  if (!["pd", "admin", "ges_management", "md"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -128,7 +128,7 @@ export async function PATCH(req: NextRequest) {
 
   if (action === "submit") {
     // PM submits their plan for this project-week
-    if (role !== "pm" && role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (role !== "pd" && role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     await prisma.resourcePlan.updateMany({
       where: { projectId, weekStart: wsDate },
       data: { planStatus: "submitted" },
@@ -138,7 +138,7 @@ export async function PATCH(req: NextRequest) {
 
   if (action === "approve" || action === "reject") {
     // ONLY PD can approve/reject resource plans
-    if (role !== "pd") return NextResponse.json({ error: "Only PD can approve resource plans" }, { status: 403 });
+    if (role !== "ges_management") return NextResponse.json({ error: "Only PD can approve resource plans" }, { status: 403 });
     const newStatus = action === "approve" ? "approved" : "draft";
     await prisma.resourcePlan.updateMany({
       where: { projectId, weekStart: wsDate },
@@ -153,7 +153,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["pm", "pd", "admin"].includes((session.user as any).role)) {
+  if (!["pd", "ges_management", "admin", "md"].includes((session.user as any).role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

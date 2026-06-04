@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pm", "admin"].includes(role))
+  if (!["pd", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const formData  = await req.formData();
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   if (!file || !projectId)
     return NextResponse.json({ error: "Missing file or projectId" }, { status: 400 });
 
-  if (role === "pm") {
+  if (role === "pd") {
     const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
     if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }

@@ -83,7 +83,7 @@ function ProjectsTab() {
     const empData  = await empRes.json();
     setProjects(projData.projects || []);
     // All employees with PM/PD/admin roles are selectable for both manager and pd fields
-    setManagers((empData.employees || []).filter((e: any) => ["pm","pd","admin"].includes(e.role)));
+    setManagers((empData.employees || []).filter((e: any) => ["pd","ges_management","admin","md"].includes(e.role)));
     setLoading(false);
   }, []);
 
@@ -167,14 +167,14 @@ function ProjectsTab() {
               <label className="block text-xs text-gray-500 mb-1">Project Manager (PM)</label>
               <select className="ges-input" value={form.managerId} onChange={(e) => setForm({ ...form, managerId: e.target.value })}>
                 <option value="">— ไม่ระบุ —</option>
-                {managers.filter((m) => ["pm","admin"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
+                {managers.filter((m) => ["pd","admin","md"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Project Director (PD)</label>
               <select className="ges-input" value={form.pdId} onChange={(e) => setForm({ ...form, pdId: e.target.value })}>
                 <option value="">— ไม่ระบุ —</option>
-                {managers.filter((m) => ["pd","admin"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
+                {managers.filter((m) => ["ges_management","admin","md"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
               </select>
             </div>
             <div>

@@ -39,9 +39,9 @@ export default function AdminPage() {
 
   const role    = (session?.user as any)?.role;
   const isAdmin = role === "admin";
-  const isPM    = role === "pd";
-  const isPM    = role === "pm";
-  const canApprove = isPM || isAdmin;
+  const isMD    = role === "md";
+  const isPD    = role === "pd";   // Project Director — อนุมัติ Timesheet
+  const canApprove = isPD || isAdmin || isMD;
 
   useEffect(() => {
     if (session && !canApprove) router.push("/timesheet");
@@ -153,10 +153,10 @@ export default function AdminPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {isPM ? "Timesheet Approval" : "Admin View"}
+            {isPD ? "Timesheet Approval" : "Admin View"}
           </h1>
           <p className="text-gray-500 text-sm">
-            {isPM ? "อนุมัติ Timesheet ประจำสัปดาห์" : "Timesheet submission overview"}
+            {isPD ? "อนุมัติ Timesheet ประจำสัปดาห์" : "Timesheet submission overview"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -186,16 +186,16 @@ export default function AdminPage() {
       {summary && summary.total > 0 && (
         <div className="ges-card p-4 mb-6">
           <div className="flex justify-between text-sm mb-2">
-            <span className="font-medium text-gray-700">{isPM ? "อนุมัติแล้ว" : "Submission Progress"}</span>
+            <span className="font-medium text-gray-700">{isPD ? "อนุมัติแล้ว" : "Submission Progress"}</span>
             <span className="text-gray-500">
-              {isPM
+              {isPD
                 ? `อนุมัติ ${approvedCount}/${summary.total} (${Math.round((approvedCount / summary.total) * 100)}%)`
                 : `${summary.submitted}/${summary.total} (${Math.round((summary.submitted / summary.total) * 100)}%)`}
             </span>
           </div>
           <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
             <div className="h-full bg-green-500 rounded-full transition-all duration-500"
-              style={{ width: `${isPM ? (approvedCount / summary.total) * 100 : (summary.submitted / summary.total) * 100}%` }} />
+              style={{ width: `${isPD ? (approvedCount / summary.total) * 100 : (summary.submitted / summary.total) * 100}%` }} />
           </div>
         </div>
       )}
@@ -230,7 +230,7 @@ export default function AdminPage() {
 
         <div className="flex gap-2 ml-auto flex-wrap items-center">
           {/* Bulk approve (PD only, employee view) */}
-          {isPM && view === "employee" && (
+          {isPD && view === "employee" && (
             <>
               <button onClick={selectAllSubmitted}
                 className="text-xs px-3 py-1.5 rounded border border-amber-300 text-amber-700 hover:bg-amber-50">
@@ -258,7 +258,7 @@ export default function AdminPage() {
             <table className="ges-table w-full">
               <thead>
                 <tr>
-                  {isPM && <th className="w-8"></th>}
+                  {isPD && <th className="w-8"></th>}
                   <th className="text-left">รหัสพนักงาน</th>
                   <th className="text-left">ชื่อ-นามสกุล</th>
                   <th className="text-left">แผนก</th>
@@ -271,14 +271,14 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={isPM ? 9 : 8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
+                  <tr><td colSpan={isPD ? 9 : 8} className="text-center py-8 text-gray-400">ไม่พบข้อมูล</td></tr>
                 ) : filtered.map((emp) => {
                   const capacity = summary?.weekCapacity ?? 40;
                   const util = capacity > 0 ? Math.round((emp.totalHrs / capacity) * 100) : 0;
                   const isSelected = emp.timesheetId ? selectedIds.has(emp.timesheetId) : false;
                   return (
                     <tr key={emp.id} className={isSelected ? "bg-amber-50" : ""}>
-                      {isPM && (
+                      {isPD && (
                         <td className="text-center">
                           {emp.status === "submitted" && emp.timesheetId && (
                             <input type="checkbox" checked={isSelected}
@@ -313,7 +313,7 @@ export default function AdminPage() {
                       </td>
                       <td className="text-center">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
-                          {isPM && emp.status === "submitted" && emp.timesheetId && (
+                          {isPD && emp.status === "submitted" && emp.timesheetId && (
                             <button onClick={() => act(emp.timesheetId!, "approve")}
                               disabled={acting.has(emp.timesheetId!)}
                               className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
@@ -346,7 +346,7 @@ export default function AdminPage() {
       {view === "project" && (
         <div className="space-y-4">
           {/* Multi-project bulk approve bar (PD only) */}
-          {isPM && !loading && projectRows.length > 0 && (
+          {isPD && !loading && projectRows.length > 0 && (
             <div className="ges-card px-4 py-3 flex items-center gap-3 flex-wrap">
               <span className="text-sm text-gray-600 font-medium">เลือก Project ที่ต้องการอนุมัติ:</span>
               <button
@@ -384,7 +384,7 @@ export default function AdminPage() {
                 <div className={`flex items-center justify-between px-5 py-3 border-b ${isChecked ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-100"}`}>
                   <div className="flex items-center gap-3">
                     {/* Project-level checkbox (PD only, only when there are submitted) */}
-                    {isPM && hasSubmitted && (
+                    {isPD && hasSubmitted && (
                       <input type="checkbox" checked={isChecked}
                         onChange={() => toggleSelectProj(proj.projectId)}
                         className="rounded border-gray-300 text-green-600 cursor-pointer w-4 h-4" />
@@ -403,7 +403,7 @@ export default function AdminPage() {
                       <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full">รออนุมัติ {submittedEmps.length}</span>
                     )}
                     {/* Approve this project's submitted employees */}
-                    {isPM && submittedEmps.length > 0 && (
+                    {isPD && submittedEmps.length > 0 && (
                       <button
                         onClick={async () => {
                           setBulkLoading(true);
@@ -450,7 +450,7 @@ export default function AdminPage() {
                         <td className="text-center"><StatusBadge status={emp.status} /></td>
                         <td className="text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {isPM && emp.status === "submitted" && (
+                            {isPD && emp.status === "submitted" && (
                               <button onClick={() => act(emp.timesheetId, "approve")}
                                 disabled={acting.has(emp.timesheetId)}
                                 className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">

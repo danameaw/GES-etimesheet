@@ -8,7 +8,7 @@ const MS_13H = 13 * 60 * 60 * 1000;
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "pd")
+  if ((session.user as any).role !== "ges_management")
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
