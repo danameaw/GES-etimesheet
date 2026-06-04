@@ -151,7 +151,7 @@ export default function EmployeesPage() {
     // Data sheet
     const ws = XLSX.utils.aoa_to_sheet([
       ["employeeId", "name", "department", "position", "level", "role"],
-      ["GES001", "Somchai Prasertphon", "Process Engineering", "Process Engineer", "Engineer I", "employee"],
+      ["GES001", "Somchai Prasertphon", "Engineering", "Process Engineer", "Engineer I", "employee"],
     ]);
     ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, "Employees");
