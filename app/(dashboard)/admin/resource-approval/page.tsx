@@ -382,7 +382,7 @@ function ProjectOverview({ year: _year, month: _month }: { year: number; month: 
                             <div className="text-gray-400">{emp?.employeeId}</div>
                           </td>
                           <td className="px-3 py-2 text-gray-500">{emp?.department}</td>
-                          {months.map((m) => {
+                          {months.map((m: { year: number; month: number }) => {
                             const p = empPlans.find((ep: any) => ep.employeeId === empId && ep.year === m.year && ep.month === m.month);
                             return (
                               <td key={`${m.year}-${m.month}`} className="px-2 py-2 text-center">
