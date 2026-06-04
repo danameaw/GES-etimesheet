@@ -34,7 +34,7 @@ export default function ResourcePlanPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const canAccess = ["pd", "ges_management", "admin", "md"].includes(role);
+  const canAccess = ["pd", "admin"].includes(role);
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
   // ── State ──

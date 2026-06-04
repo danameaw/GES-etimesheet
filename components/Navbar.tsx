@@ -31,14 +31,14 @@ export default function Navbar() {
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
-    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD || isGESMgmt || isMD },
-    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD || isMD },
+    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD || isAdmin },
+    { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
     { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt || isMD },
-    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD },
+    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD || isAdmin },
     { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isGESMgmt || isMD },
-    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin || isMD },
-    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin || isMD },
-    { href: "/manage",                  label: "Manage",         icon: "⚙️", show: isAdmin || isMD },
+    { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
+    { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
+    { href: "/manage",                  label: "Manage",         icon: "⚙️", show: isAdmin },
   ];
 
   return (

@@ -30,13 +30,12 @@ export async function GET(req: NextRequest) {
   // PD/admin forApproval → all active non-draft projects
   // admin     → all active projects
   let projectWhere: any = { isActive: true };
-  if (role === "pd")  projectWhere = { managerId: empDbId, isActive: true };
   if (role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
       : { pdId: empDbId, isActive: true };
   }
-  if (role === "admin" && forApproval) {
+  if ((role === "admin" || role === "md") && forApproval) {
     projectWhere = { isActive: true, planStatus: { not: "draft" } };
   }
 
@@ -109,10 +108,10 @@ export async function POST(req: NextRequest) {
   if (!projectId || !department || !year || !month)
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
 
-  // Verify PM owns the project + plan is editable
+  // Verify plan is editable (draft only)
   if (role === "pd") {
-    const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
-    if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
+    const proj = await prisma.project.findFirst({ where: { id: projectId } });
+    if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     if (proj.planStatus !== "draft")
       return NextResponse.json({ error: "Plan is locked. Request revision first." }, { status: 403 });
   }
@@ -142,27 +141,16 @@ export async function PATCH(req: NextRequest) {
     if (!["pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // Verify PM owns project
-    if (role === "pd") {
-      const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
-      if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
-    }
-
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } });
     await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
     await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
     return NextResponse.json({ success: true, planStatus: "submitted" });
   }
 
-  // PM requests revision of submitted/approved plan
+  // PD requests revision of submitted/approved plan
   if (action === "revision_request") {
     if (!["pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    if (role === "pd") {
-      const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
-      if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
-    }
 
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "revision_requested" } });
     await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "revision_requested" } });

@@ -69,7 +69,7 @@ function ProjectsTab() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
 
-  const emptyForm = { projectNumber: "", projectName: "", projectType: "project", managerId: "", pdId: "", startDate: "", endDate: "" };
+  const emptyForm = { projectNumber: "", projectName: "", projectType: "project", pdId: "", startDate: "", endDate: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
@@ -95,7 +95,6 @@ function ProjectsTab() {
       projectNumber: p.projectNumber,
       projectName:   p.projectName,
       projectType:   p.projectType,
-      managerId:     p.managerId || "",
       pdId:          p.pdId      || "",
       startDate:     p.startDate ? p.startDate.slice(0, 10) : "",
       endDate:       p.endDate   ? p.endDate.slice(0, 10)   : "",
@@ -161,13 +160,6 @@ function ProjectsTab() {
                 <option value="project">Project</option>
                 <option value="support">Support / Overhead</option>
                 <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Project Manager (PM)</label>
-              <select className="ges-input" value={form.managerId} onChange={(e) => setForm({ ...form, managerId: e.target.value })}>
-                <option value="">— ไม่ระบุ —</option>
-                {managers.filter((m) => ["pd","admin","md"].includes((m as any).role)).map((m) => <option key={m.id} value={m.id}>{m.employeeId} – {m.name}</option>)}
               </select>
             </div>
             <div>
