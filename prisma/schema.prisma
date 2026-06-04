@@ -14,7 +14,7 @@ model Employee {
   department  String
   position    String
   level       String   @default("")  // links to StandardRate.level (set by PD)
-  role        String   @default("employee")  // employee | pm | pd | admin
+  role        String   @default("employee")  // employee | pd | ges_management | admin | md
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
 
