@@ -45,14 +45,10 @@ export async function GET(req: NextRequest) {
     orderBy: { projectNumber: "asc" },
   });
 
-  // All distinct departments from active employees
-  const empDepts = await prisma.employee.findMany({
-    where: { isActive: true },
-    select: { department: true },
-    distinct: ["department"],
-    orderBy: { department: "asc" },
-  });
-  const departments = empDepts.map((e) => e.department);
+  const departments = [
+    "Management", "Project Management", "Engineering", "Construction",
+    "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
+  ];
 
   if (!projectId) {
     return NextResponse.json({ projects, departments, plans: [] });

@@ -9,6 +9,7 @@ const MD_APPROVE_DEPTS = ["Management", "Project Management"];
 interface EmpWorkload {
   employee:     { id: string; employeeId: string; name: string; department: string; position: string };
   totalPlanned: number;
+  actualHrs:    number;
   projects:     { projectId: string; projectNumber: string; projectName: string; planStatus: string; plannedHrs: number }[];
 }
 interface DeptWorkload { name: string; employees: EmpWorkload[]; }
@@ -35,8 +36,8 @@ export default function ResourceApprovalPage() {
   const [loading, setLoading] = useState(false);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
-  // MD view: "workload" or "projects"
-  const [mdView, setMdView] = useState<"workload" | "projects">("workload");
+  // MD view: "workload", "approve", or "projects"
+  const [mdView, setMdView] = useState<"workload" | "approve" | "projects">("workload");
 
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
@@ -126,7 +127,11 @@ export default function ResourceApprovalPage() {
         <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit mb-5">
           <button onClick={() => setMdView("workload")}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${mdView === "workload" ? "bg-white text-blue-900 shadow-sm" : "text-gray-500"}`}>
-            📊 Workload รายแผนก
+            📊 Plan/Actual รายแผนก
+          </button>
+          <button onClick={() => setMdView("approve")}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${mdView === "approve" ? "bg-white text-blue-900 shadow-sm" : "text-gray-500"}`}>
+            ✅ Approve Plan
           </button>
           <button onClick={() => setMdView("projects")}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${mdView === "projects" ? "bg-white text-blue-900 shadow-sm" : "text-gray-500"}`}>
@@ -144,13 +149,37 @@ export default function ResourceApprovalPage() {
         </div>
       ) : mdView === "projects" && isMD ? (
         <ProjectOverview year={year} month={month} />
+      ) : mdView === "approve" && isMD ? (
+        /* MD: Approve Plan — Management + Project Management only */
+        <WorkloadView data={data} filterDepts={MD_APPROVE_DEPTS} canApprove acting={acting} approveDept={approveDept} expandedEmp={expandedEmp} setExpandedEmp={setExpandedEmp} />
       ) : (
-        /* Workload by department */
+        /* Workload by department (view only for MD, full approve for GES management) */
+        <WorkloadView data={data} filterDepts={null} canApprove={!isMD} acting={acting} approveDept={approveDept} expandedEmp={expandedEmp} setExpandedEmp={setExpandedEmp} />
+      )}
+    </div>
+  );
+}
+
+// ── Reusable workload view ───────────────────────────────────────────────────
+function WorkloadView({ data, filterDepts, canApprove, acting, approveDept, expandedEmp, setExpandedEmp }: {
+  data: WorkloadData;
+  filterDepts: string[] | null;
+  canApprove: boolean;
+  acting: string | null;
+  approveDept: (dept: string) => void;
+  expandedEmp: string | null;
+  setExpandedEmp: (id: string | null) => void;
+}) {
+  const depts = filterDepts ? data.departments.filter((d) => filterDepts.includes(d.name)) : data.departments;
+
+  if (depts.length === 0) return (
+    <div className="ges-card p-10 text-center text-gray-400">ไม่มีข้อมูลสำหรับ Department นี้</div>
+  );
+
+  return (
         <div className="space-y-5">
-          {data.departments.map((dept) => {
-            const canApprove =
-              isMD ? MD_APPROVE_DEPTS.includes(dept.name)
-              : true; // ges_management can approve own dept (only their dept is shown)
+          {depts.map((dept) => {
+            const canApproveDept = canApprove;
 
             const hasSubmitted = dept.employees.some((e) => e.projects.some((p) => p.planStatus === "submitted"));
             const overCount    = dept.employees.filter((e) => e.totalPlanned > data.standardHrs).length;
@@ -166,7 +195,7 @@ export default function ResourceApprovalPage() {
                       {overCount > 0 && <span className="ml-2 text-red-600 font-medium">⚠ {overCount} คน Overload</span>}
                     </p>
                   </div>
-                  {canApprove && hasSubmitted && (
+                  {canApproveDept && hasSubmitted && (
                     <button
                       onClick={() => approveDept(dept.name)}
                       disabled={acting === dept.name}
@@ -175,7 +204,7 @@ export default function ResourceApprovalPage() {
                       {acting === dept.name ? "…" : "✓ Approve Department"}
                     </button>
                   )}
-                  {canApprove && !hasSubmitted && (
+                  {canApproveDept && !hasSubmitted && (
                     <span className="text-xs text-green-600 font-medium">✓ ไม่มี Plan รอ Approve</span>
                   )}
                 </div>
@@ -188,8 +217,9 @@ export default function ResourceApprovalPage() {
                         <th className="text-left">พนักงาน</th>
                         <th className="text-left">ตำแหน่ง</th>
                         <th className="text-center">Plan รวม</th>
+                        <th className="text-center">Actual</th>
                         <th className="text-center">มาตรฐาน</th>
-                        <th className="text-center">สถานะ</th>
+                        <th className="text-center">สถานะ Plan</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -208,6 +238,9 @@ export default function ResourceApprovalPage() {
                               <td className="text-xs text-gray-500">{emp.employee.position}</td>
                               <td className="text-center font-bold" style={{ color: isOver ? "#dc2626" : "#1d4ed8" }}>
                                 {emp.totalPlanned}h
+                              </td>
+                              <td className="text-center font-semibold text-gray-700">
+                                {emp.actualHrs > 0 ? `${emp.actualHrs}h` : <span className="text-gray-300">–</span>}
                               </td>
                               <td className="text-center text-gray-500">{data.standardHrs}h</td>
                               <td className="text-center">
@@ -232,7 +265,7 @@ export default function ResourceApprovalPage() {
                             </tr>
                             {expanded && (
                               <tr key={`${empKey}-detail`} className="bg-blue-50">
-                                <td colSpan={6} className="px-6 py-2">
+                                <td colSpan={7} className="px-6 py-2">
                                   <div className="space-y-1">
                                     {emp.projects.map((p) => (
                                       <div key={p.projectId} className="flex items-center gap-3 text-xs">
@@ -256,8 +289,6 @@ export default function ResourceApprovalPage() {
             );
           })}
         </div>
-      )}
-    </div>
   );
 }
 
