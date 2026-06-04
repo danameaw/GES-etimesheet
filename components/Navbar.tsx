@@ -31,10 +31,10 @@ export default function Navbar() {
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
-    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD || isAdmin },
+    { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD },
     { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
     { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt || isMD },
-    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD || isAdmin },
+    { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD },
     { href: "/dashboard",               label: "Dashboard",      icon: "📊", show: isGESMgmt || isMD },
     { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
     { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
