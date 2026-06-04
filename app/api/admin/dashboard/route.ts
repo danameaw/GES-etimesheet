@@ -234,6 +234,63 @@ export async function GET(req: NextRequest) {
   const totalHours   = entries.reduce((s, e) => s + e.totalHrs, 0);
   const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
 
+  // ── Employee matrix (for GES Management dept view) ──────────────────────
+  let empActualMatrix: any[] = [];
+  if (deptFilter) {
+    const matStart = new Date(Date.UTC(matMonths[0].year, matMonths[0].month - 1, 1));
+    const matEnd   = new Date(Date.UTC(matMonths[matMonths.length - 1].year, matMonths[matMonths.length - 1].month, 0));
+
+    const [empPlans, empTimesheets] = await Promise.all([
+      prisma.resourcePlanEmployeeMonthly.findMany({
+        where: {
+          employee: { department: deptFilter, isActive: true },
+          OR: matMonths.map((m) => ({ year: m.year, month: m.month })),
+        },
+        include: { employee: { select: { id: true, employeeId: true, name: true, position: true } } },
+      }),
+      prisma.timesheet.findMany({
+        where: {
+          weekStart: { gte: new Date(matStart.getTime() - MS_13H), lte: new Date(matEnd.getTime() + MS_13H) },
+          employee: { department: deptFilter },
+          status: { in: ["submitted", "approved"] },
+        },
+        include: { employee: { select: { id: true } }, entries: { select: { totalHrs: true } } },
+      }),
+    ]);
+
+    // Aggregate plans: empId|month -> plannedHrs
+    const empPlanMap = new Map<string, number>();
+    const empMeta    = new Map<string, any>();
+    for (const p of empPlans) {
+      const k = `${p.employee.id}|${p.year}|${p.month}`;
+      empPlanMap.set(k, (empPlanMap.get(k) ?? 0) + p.plannedHrs);
+      empMeta.set(p.employee.id, p.employee);
+    }
+
+    // Aggregate actuals: empId|month -> actualHrs
+    const empActMap = new Map<string, number>();
+    for (const ts of empTimesheets) {
+      const d = new Date(ts.weekStart);
+      const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1;
+      if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
+      const hrs = ts.entries.reduce((s: number, e: any) => s + e.totalHrs, 0);
+      const k = `${ts.employee.id}|${y}|${m}`;
+      empActMap.set(k, (empActMap.get(k) ?? 0) + hrs);
+    }
+
+    empActualMatrix = Array.from(empMeta.values()).map((emp) => {
+      const months = matMonths.map((m) => ({
+        year: m.year, month: m.month, label: m.label,
+        planned: empPlanMap.get(`${emp.id}|${m.year}|${m.month}`) ?? 0,
+        actual:  empActMap.get(`${emp.id}|${m.year}|${m.month}`) ?? 0,
+      }));
+      const totalPlanned = months.reduce((s, m) => s + m.planned, 0);
+      const totalActual  = months.reduce((s, m) => s + m.actual,  0);
+      return { empId: emp.id, employeeId: emp.employeeId, name: emp.name, position: emp.position, months, totalPlanned, totalActual };
+    }).filter((e) => e.totalPlanned > 0 || e.totalActual > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   // ── 6. Leave/Holiday Breakdown (task category "Leave") ──
   const leaveEntries = entries.filter((e) =>
     e.taskCode.category === "Leave" || e.taskCode.code === "1001"
@@ -256,6 +313,7 @@ export async function GET(req: NextRequest) {
     topEmployees,
     allDepts,
     planActualMatrix,
+    empActualMatrix,
     matrixMonths:    matMonths,
     leaveBreakdown,
     summary: { totalHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode, totalLeaveHrs },

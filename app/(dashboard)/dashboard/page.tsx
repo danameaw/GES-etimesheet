@@ -21,6 +21,7 @@ interface TrendRow        { week: string; utilization: number; totalHrs: number;
 interface EmpRow          { name: string; hours: number; department: string; }
 interface LeaveRow        { name: string; employeeId: string; department: string; hours: number; }
 interface MatrixProject   { projectId: string; projectNumber: string; projectName: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; }
+interface MatrixEmp       { empId: string; employeeId: string; name: string; position: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; }
 interface MatrixMonth     { year: number; month: number; label: string; }
 
 interface DashData {
@@ -31,6 +32,7 @@ interface DashData {
   topEmployees:     EmpRow[];
   allDepts:         string[];
   planActualMatrix: MatrixProject[];
+  empActualMatrix:  MatrixEmp[];
   matrixMonths:     MatrixMonth[];
   leaveBreakdown:   LeaveRow[];
   summary:          { totalHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number };
@@ -359,7 +361,9 @@ export default function DashboardPage() {
           {/* ── Chart 6: Plan vs Actual Matrix ── */}
           <div className="ges-card overflow-x-auto">
             <div className="px-5 py-3 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-800">⑥ Plan vs Actual Matrix</h2>
+              <h2 className="font-semibold text-gray-800">
+                ⑥ Plan vs Actual Matrix — {isGESMgmt ? "รายบุคคล" : "รายโครงการ"}
+              </h2>
               <div className="flex gap-4 mt-1 text-xs">
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-300" /> Actual &gt; Plan</span>
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300" /> On Plan (≥80%)</span>
@@ -367,69 +371,115 @@ export default function DashboardPage() {
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-gray-100 border border-gray-200" /> ไม่มีแผน</span>
               </div>
             </div>
-            {data.planActualMatrix.length === 0 ? (
-              <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan ในระบบ</div>
+
+            {/* GES Management: Employee matrix */}
+            {isGESMgmt ? (
+              (data.empActualMatrix ?? []).length === 0 ? (
+                <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan สำหรับ Department นี้</div>
+              ) : (
+                <MatrixTable
+                  rows={(data.empActualMatrix ?? []).map((e) => ({
+                    key: e.empId,
+                    label1: e.name,
+                    label2: e.employeeId,
+                    months: e.months,
+                    totalPlanned: e.totalPlanned,
+                    totalActual: e.totalActual,
+                  }))}
+                  matrixMonths={data.matrixMonths}
+                />
+              )
             ) : (
-              <table className="text-xs w-full">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="text-left px-4 py-2.5 font-semibold text-gray-700 min-w-[140px] sticky left-0 bg-gray-50 border-r border-gray-200 z-10">โปรเจกต์</th>
-                    {data.matrixMonths.map((m) => (
-                      <th key={`${m.year}-${m.month}`} className="px-2 py-2.5 text-center min-w-[90px] font-medium text-gray-600">{m.label}</th>
-                    ))}
-                    <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700 border-l border-gray-200">Total Plan</th>
-                    <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700">Total Actual</th>
-                    <th className="px-3 py-2.5 text-center min-w-[70px] font-semibold text-gray-700">Variance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.planActualMatrix.map((proj) => {
-                    const variance = proj.totalPlanned > 0
-                      ? Math.round(((proj.totalActual - proj.totalPlanned) / proj.totalPlanned) * 100)
-                      : 0;
-                    return (
-                      <tr key={proj.projectId} className="border-t border-gray-100 hover:bg-gray-50">
-                        <td className="px-4 py-2 sticky left-0 bg-white border-r border-gray-200 z-10">
-                          <p className="font-mono font-semibold text-blue-700">{proj.projectNumber}</p>
-                          <p className="text-gray-500 text-xs truncate max-w-[130px]">{proj.projectName}</p>
-                        </td>
-                        {proj.months.map((m) => {
-                          const hasData = m.planned > 0 || m.actual > 0;
-                          const over    = m.planned > 0 && m.actual > m.planned;
-                          const onPlan  = m.planned > 0 && m.actual >= m.planned * 0.8;
-                          const under   = m.planned > 0 && m.actual < m.planned * 0.8;
-                          const cellBg  = !hasData ? "" : over ? "bg-red-50" : onPlan ? "bg-green-50" : under ? "bg-amber-50" : "";
-                          const pct     = m.planned > 0 ? Math.round((m.actual / m.planned) * 100) : 0;
-                          return (
-                            <td key={`${m.year}-${m.month}`}
-                              className={`px-2 py-2 text-center ${cellBg}`}
-                              title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%` : "ไม่มีแผน"}>
-                              {hasData ? (
-                                <div>
-                                  <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"}`}>
-                                    {m.actual}h
-                                  </div>
-                                  <div className="text-gray-400">/{m.planned}h</div>
-                                  {m.planned > 0 && <div className={`text-xs font-medium ${over ? "text-red-600" : onPlan ? "text-green-600" : "text-amber-600"}`}>{pct}%</div>}
-                                </div>
-                              ) : <span className="text-gray-200">–</span>}
-                            </td>
-                          );
-                        })}
-                        <td className="px-3 py-2 text-center border-l border-gray-200 font-semibold text-purple-800">{proj.totalPlanned > 0 ? `${proj.totalPlanned}h` : "–"}</td>
-                        <td className="px-3 py-2 text-center font-semibold text-blue-900">{proj.totalActual > 0 ? `${proj.totalActual}h` : "–"}</td>
-                        <td className={`px-3 py-2 text-center font-bold ${variance > 0 ? "text-red-600" : variance < -20 ? "text-amber-600" : "text-green-600"}`}>
-                          {proj.totalPlanned > 0 ? `${variance > 0 ? "+" : ""}${variance}%` : "–"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              /* MD / PD: Project matrix */
+              data.planActualMatrix.length === 0 ? (
+                <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan ในระบบ</div>
+              ) : (
+                <MatrixTable
+                  rows={data.planActualMatrix.map((p) => ({
+                    key: p.projectId,
+                    label1: p.projectNumber,
+                    label2: p.projectName,
+                    months: p.months,
+                    totalPlanned: p.totalPlanned,
+                    totalActual: p.totalActual,
+                    isProject: true,
+                  }))}
+                  matrixMonths={data.matrixMonths}
+                />
+              )
             )}
           </div>
         </>
       )}
     </div>
+  );
+}
+
+// ── Reusable Matrix Table ────────────────────────────────────────────────────
+function MatrixTable({ rows, matrixMonths }: {
+  rows: { key: string; label1: string; label2: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; isProject?: boolean }[];
+  matrixMonths: { year: number; month: number; label: string }[];
+}) {
+  if (!rows.length) return <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan</div>;
+  return (
+    <table className="text-xs w-full">
+      <thead>
+        <tr className="bg-gray-50">
+          <th className="text-left px-4 py-2.5 font-semibold text-gray-700 min-w-[160px] sticky left-0 bg-gray-50 border-r border-gray-200 z-10">
+            {rows[0]?.isProject ? "โปรเจกต์" : "พนักงาน"}
+          </th>
+          {matrixMonths.map((m) => (
+            <th key={`${m.year}-${m.month}`} className="px-2 py-2.5 text-center min-w-[90px] font-medium text-gray-600">{m.label}</th>
+          ))}
+          <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700 border-l border-gray-200">Total Plan</th>
+          <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700">Total Actual</th>
+          <th className="px-3 py-2.5 text-center min-w-[70px] font-semibold text-gray-700">Variance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const variance = row.totalPlanned > 0
+            ? Math.round(((row.totalActual - row.totalPlanned) / row.totalPlanned) * 100) : 0;
+          return (
+            <tr key={row.key} className="border-t border-gray-100 hover:bg-gray-50">
+              <td className="px-4 py-2 sticky left-0 bg-white border-r border-gray-200 z-10">
+                {row.isProject ? (
+                  <><p className="font-mono font-semibold text-blue-700">{row.label1}</p>
+                    <p className="text-gray-500 truncate max-w-[140px]">{row.label2}</p></>
+                ) : (
+                  <><p className="font-semibold text-gray-800">{row.label1}</p>
+                    <p className="text-gray-400">{row.label2}</p></>
+                )}
+              </td>
+              {matrixMonths.map((mm) => {
+                const m = row.months.find((x) => x.year === mm.year && x.month === mm.month) ?? { planned: 0, actual: 0 };
+                const hasData = m.planned > 0 || m.actual > 0;
+                const over    = m.planned > 0 && m.actual > m.planned;
+                const onPlan  = m.planned > 0 && m.actual >= m.planned * 0.8;
+                const cellBg  = !hasData ? "" : over ? "bg-red-50" : onPlan ? "bg-green-50" : "bg-amber-50";
+                const pct     = m.planned > 0 ? Math.round((m.actual / m.planned) * 100) : 0;
+                return (
+                  <td key={`${mm.year}-${mm.month}`} className={`px-2 py-2 text-center ${cellBg}`}
+                    title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%` : "ไม่มีแผน"}>
+                    {hasData ? (
+                      <div>
+                        <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"}`}>{m.actual}h</div>
+                        <div className="text-gray-400">/{m.planned}h</div>
+                        {m.planned > 0 && <div className={`font-medium ${over ? "text-red-600" : onPlan ? "text-green-600" : "text-amber-600"}`}>{pct}%</div>}
+                      </div>
+                    ) : <span className="text-gray-200">–</span>}
+                  </td>
+                );
+              })}
+              <td className="px-3 py-2 text-center border-l border-gray-200 font-semibold text-purple-800">{row.totalPlanned > 0 ? `${row.totalPlanned}h` : "–"}</td>
+              <td className="px-3 py-2 text-center font-semibold text-blue-900">{row.totalActual > 0 ? `${row.totalActual}h` : "–"}</td>
+              <td className={`px-3 py-2 text-center font-bold ${variance > 0 ? "text-red-600" : variance < -20 ? "text-amber-600" : "text-green-600"}`}>
+                {row.totalPlanned > 0 ? `${variance > 0 ? "+" : ""}${variance}%` : "–"}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
