@@ -16,7 +16,7 @@ export const authOptions: NextAuthOptions = {
         const employee = await prisma.employee.findFirst({
           where: {
             employeeId: credentials.employeeId.trim().toUpperCase(),
-            name: credentials.name.trim(),
+            name: { equals: credentials.name.trim(), mode: "insensitive" },
             isActive: true,
           },
         });

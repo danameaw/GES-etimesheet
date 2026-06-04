@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const role = (session.user as any).role;
+  const role    = (session.user as any).role;
+  const empDbId = (session.user as any).id;
   if (!["admin", "pd", "md"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -24,6 +25,19 @@ export async function GET(req: NextRequest) {
 
   const weekStartMin = new Date(weekStart.getTime() - MS_13H);
   const weekStartMax = new Date(weekStart.getTime() + MS_13H);
+
+  // ── For PD: find their projects (pdId OR managerId) ──────────────────────
+  let pdProjectIds: Set<string> | null = null;
+  if (role === "pd") {
+    const pdProjects = await prisma.project.findMany({
+      where: {
+        isActive: true,
+        OR: [{ pdId: empDbId }, { managerId: empDbId }],
+      },
+      select: { id: true },
+    });
+    pdProjectIds = new Set(pdProjects.map((p) => p.id));
+  }
 
   const [allEmployees, timesheets] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { employeeId: "asc" } }),
@@ -63,21 +77,35 @@ export async function GET(req: NextRequest) {
   // ── Project-view grouping ──────────────────────────────────────────────────
   let projectRows: any[] = [];
   if (view === "project") {
+    // Planned hours for this month (week's month)
+    const year  = weekStart.getUTCFullYear();
+    const month = weekStart.getUTCMonth() + 1;
+    const planData = await prisma.resourcePlanEmployeeMonthly.findMany({
+      where: { year, month },
+      select: { projectId: true, employeeId: true, plannedHrs: true },
+    });
+    const planMap = new Map<string, number>();
+    for (const p of planData) planMap.set(`${p.projectId}|${p.employeeId}`, p.plannedHrs);
+
     const projMap = new Map<string, {
       projectId: string; projectNumber: string; projectName: string;
       employees: { id: string; employeeId: string; name: string; department: string;
-                   timesheetId: string; status: string; totalHrs: number; projectHrs: number }[];
+                   timesheetId: string; status: string; totalHrs: number;
+                   projectHrs: number; plannedHrs: number }[];
     }>();
 
     for (const ts of timesheets) {
       const tsTotalHrs = ts.entries.reduce((s, e) => s + e.totalHrs, 0);
       for (const entry of ts.entries) {
         const p = entry.project;
+        // PD: only their own projects
+        if (pdProjectIds && !pdProjectIds.has(p.id)) continue;
+
         if (!projMap.has(p.id)) {
           projMap.set(p.id, { projectId: p.id, projectNumber: p.projectNumber, projectName: p.projectName, employees: [] });
         }
         const proj = projMap.get(p.id)!;
-        const exists = proj.employees.find((e) => e.id === ts.employeeId);
+        const exists = proj.employees.find((e) => e.id === ts.employee.id);
         if (exists) {
           exists.projectHrs += entry.totalHrs;
         } else {
@@ -90,6 +118,7 @@ export async function GET(req: NextRequest) {
             status:      ts.status,
             totalHrs:    tsTotalHrs,
             projectHrs:  entry.totalHrs,
+            plannedHrs:  planMap.get(`${p.id}|${ts.employee.id}`) ?? 0,
           });
         }
       }
@@ -99,8 +128,24 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.projectNumber.localeCompare(b.projectNumber));
   }
 
+  // For PD summary: count only employees in their projects
+  const summaryEmployees = pdProjectIds
+    ? allEmployees.filter((e) => {
+        const ts = timesheetMap.get(e.id);
+        return ts?.entries.some((en) => pdProjectIds!.has(en.project.id));
+      })
+    : allEmployees;
+
   return NextResponse.json({
-    summary: { total: allEmployees.length, submitted, draft, missing, weekStart, weekEnd, weekCapacity: 40 },
+    summary: {
+      total:        pdProjectIds ? summaryEmployees.length : allEmployees.length,
+      submitted,
+      draft,
+      missing,
+      weekStart,
+      weekEnd,
+      weekCapacity: 40,
+    },
     employees: employeeRows,
     projectRows,
   });

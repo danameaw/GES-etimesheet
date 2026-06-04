@@ -13,7 +13,7 @@ interface ProjectRow {
   projectId: string; projectNumber: string; projectName: string;
   employees: {
     id: string; employeeId: string; name: string; department: string;
-    timesheetId: string; status: string; totalHrs: number; projectHrs: number;
+    timesheetId: string; status: string; totalHrs: number; projectHrs: number; plannedHrs: number;
   }[];
 }
 interface Summary {
@@ -32,7 +32,7 @@ export default function AdminPage() {
   const [filter, setFilter] = useState<"all"|"submitted"|"approved"|"draft"|"missing">("all");
   const [search, setSearch] = useState("");
   const [acting, setActing] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<"employee"|"project">("employee");
+  const [view, setView] = useState<"employee"|"project">("project");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());       // employee-view: timesheetIds
   const [selectedProjIds, setSelectedProjIds] = useState<Set<string>>(new Set()); // project-view: projectIds
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -205,17 +205,19 @@ export default function AdminPage() {
         <input type="text" placeholder="ค้นหาชื่อ, รหัส, แผนก…" value={search}
           onChange={(e) => setSearch(e.target.value)} className="ges-input max-w-sm" />
 
-        {/* View toggle */}
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
-          <button onClick={() => setView("employee")}
-            className={`px-3 py-1.5 font-medium transition-colors ${view === "employee" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-            👤 รายบุคคล
-          </button>
-          <button onClick={() => setView("project")}
-            className={`px-3 py-1.5 font-medium transition-colors border-l border-gray-200 ${view === "project" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-            📁 ราย Project
-          </button>
-        </div>
+        {/* View toggle — Admin only (PD is always project view) */}
+        {!isPD && (
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+            <button onClick={() => setView("employee")}
+              className={`px-3 py-1.5 font-medium transition-colors ${view === "employee" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              👤 รายบุคคล
+            </button>
+            <button onClick={() => setView("project")}
+              className={`px-3 py-1.5 font-medium transition-colors border-l border-gray-200 ${view === "project" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              📁 ราย Project
+            </button>
+          </div>
+        )}
 
         {view === "employee" && (
           <div className="flex gap-2 flex-wrap">
@@ -431,21 +433,31 @@ export default function AdminPage() {
                     <tr>
                       <th className="text-left">พนักงาน</th>
                       <th className="text-left">แผนก</th>
-                      <th>ชั่วโมง (project)</th>
-                      <th>ชั่วโมง (รวม)</th>
+                      <th>Plan (เดือนนี้)</th>
+                      <th>Actual (project)</th>
+                      <th>Actual (รวม)</th>
                       <th>สถานะ</th>
                       <th>การดำเนินการ</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[...proj.employees].sort((a, b) => a.employeeId.localeCompare(b.employeeId)).map((emp) => (
+                    {[...proj.employees].sort((a, b) => a.employeeId.localeCompare(b.employeeId)).map((emp) => {
+                      const overPlan = emp.plannedHrs > 0 && emp.projectHrs > emp.plannedHrs;
+                      return (
                       <tr key={emp.id}>
                         <td>
                           <p className="font-medium text-sm">{emp.name}</p>
                           <p className="text-xs font-mono text-blue-600">{emp.employeeId}</p>
                         </td>
                         <td className="text-xs text-gray-500">{emp.department}</td>
-                        <td className="text-center font-semibold text-sm text-blue-700">{emp.projectHrs}h</td>
+                        <td className="text-center text-sm">
+                          {emp.plannedHrs > 0
+                            ? <span className="font-semibold text-purple-700">{emp.plannedHrs}h</span>
+                            : <span className="text-gray-300">–</span>}
+                        </td>
+                        <td className="text-center font-semibold text-sm" style={{ color: overPlan ? "#dc2626" : "#1d4ed8" }}>
+                          {emp.projectHrs}h{overPlan && <span className="text-xs text-red-500 ml-1">▲</span>}
+                        </td>
                         <td className="text-center text-sm text-gray-600">{emp.totalHrs}h</td>
                         <td className="text-center"><StatusBadge status={emp.status} /></td>
                         <td className="text-center">
@@ -464,7 +476,8 @@ export default function AdminPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
