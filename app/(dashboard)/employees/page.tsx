@@ -246,7 +246,7 @@ export default function EmployeesPage() {
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  const departments = ["all", ...Array.from(new Set(employees.map((e) => e.department))).sort()];
+  const departments = ["all", ...DEPARTMENTS];
 
   const filtered = employees.filter((e) => {
     if (!showInactive && !e.isActive) return false;
