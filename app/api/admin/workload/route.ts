@@ -3,7 +3,33 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
-// GET /api/admin/workload?year=2026&month=6
+const MONTH_NAMES_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+// Calculate standard hours for a given year/month (8h × Mon-Fri days minus holidays)
+async function calcStandardHrs(year: number, month: number) {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let workingDays = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(year, month - 1, d).getDay();
+    if (dow >= 1 && dow <= 5) workingDays++;
+  }
+  const holidays = await prisma.holiday.findMany({
+    where: { date: { gte: new Date(year, month - 1, 1), lte: new Date(year, month - 1, daysInMonth) } },
+  });
+  const seen = new Set<string>();
+  let holidayWorkdays = 0;
+  for (const h of holidays) {
+    const key = new Date(h.date).toISOString().slice(0, 10);
+    if (!seen.has(key)) {
+      seen.add(key);
+      const dow = new Date(h.date).getDay();
+      if (dow >= 1 && dow <= 5) holidayWorkdays++;
+    }
+  }
+  return (workingDays - holidayWorkdays) * 8;
+}
+
+// GET /api/admin/workload?year=2026
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -14,38 +40,48 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const year  = Number(searchParams.get("year")  ?? new Date().getFullYear());
-  const month = Number(searchParams.get("month") ?? new Date().getMonth() + 1);
+  const year = Number(searchParams.get("year") ?? new Date().getFullYear());
 
-  // ges_management sees only their own department
+  // ges_management: only own department
   let myDept: string | null = null;
   if (role === "ges_management") {
     const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { department: true } });
     myDept = me?.department ?? null;
   }
 
-  // ── Plans ──────────────────────────────────────────────────────────────────
+  // Fetch all plans for this year
   const plans = await prisma.resourcePlanEmployeeMonthly.findMany({
     where: {
       year,
-      month,
       ...(myDept ? { employee: { department: myDept } } : {}),
     },
     include: {
       employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
       project:  { select: { id: true, projectNumber: true, projectName: true, planStatus: true } },
     },
-    orderBy: [{ employee: { department: "asc" } }, { employee: { name: "asc" } }],
+    orderBy: [{ employee: { department: "asc" } }, { employee: { name: "asc" } }, { month: "asc" }],
   });
 
-  // ── Actual hours from approved/submitted timesheets in this month ──────────
-  // A "week" belongs to month M if weekStart falls within that month
-  const monthStart = new Date(year, month - 1, 1);
-  const monthEnd   = new Date(year, month, 0);   // last day of month
+  // Distinct months that have plans
+  const monthSet = new Set<number>();
+  for (const p of plans) monthSet.add(p.month);
+  const months = Array.from(monthSet).sort((a, b) => a - b);
 
+  // Calculate standard hours per month
+  const standardHrsMap = new Map<number, number>();
+  await Promise.all(months.map(async (m) => {
+    const hrs = await calcStandardHrs(year, m);
+    standardHrsMap.set(m, hrs);
+  }));
+
+  const monthMeta = months.map((m) => ({
+    month: m, name: MONTH_NAMES_TH[m - 1], standardHrs: standardHrsMap.get(m) ?? 160,
+  }));
+
+  // Fetch actual hours per employee per month in this year (submitted/approved timesheets)
   const timesheets = await prisma.timesheet.findMany({
     where: {
-      weekStart: { gte: monthStart, lte: monthEnd },
+      weekStart: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31) },
       status: { in: ["submitted", "approved"] },
       ...(myDept ? { employee: { department: myDept } } : {}),
     },
@@ -54,60 +90,49 @@ export async function GET(req: NextRequest) {
       entries:  { select: { totalHrs: true } },
     },
   });
-
-  // Sum actual hours per employee DB id
+  // Map: employeeId|month -> actualHrs
   const actualMap = new Map<string, number>();
   for (const ts of timesheets) {
-    const hrs = ts.entries.reduce((s, e) => s + e.totalHrs, 0);
-    actualMap.set(ts.employee.id, (actualMap.get(ts.employee.id) ?? 0) + hrs);
+    const m = new Date(ts.weekStart).getUTCMonth() + 1;
+    const key = `${ts.employee.id}|${m}`;
+    actualMap.set(key, (actualMap.get(key) ?? 0) + ts.entries.reduce((s, e) => s + e.totalHrs, 0));
   }
 
-  // ── Standard hours ─────────────────────────────────────────────────────────
-  const daysInMonth = new Date(year, month, 0).getDate();
-  let workingDays = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(year, month - 1, d).getDay();
-    if (dow >= 1 && dow <= 5) workingDays++;
-  }
-  const holidays = await prisma.holiday.findMany({
-    where: { date: { gte: monthStart, lte: monthEnd } },
-  });
-  let holidayWorkdays = 0;
-  const seen = new Set<string>();
-  for (const h of holidays) {
-    const key = new Date(h.date).toISOString().slice(0, 10);
-    if (!seen.has(key)) {
-      seen.add(key);
-      const dow = new Date(h.date).getDay();
-      if (dow >= 1 && dow <= 5) holidayWorkdays++;
-    }
-  }
-  const standardHrs = (workingDays - holidayWorkdays) * 8;
+  // Group: dept → employee → project → month plans
+  type ProjEntry = {
+    projectId: string; projectNumber: string; projectName: string; planStatus: string;
+    monthPlans: Record<number, number>; // month → plannedHrs
+  };
+  type EmpEntry = {
+    employee: any;
+    projects: Map<string, ProjEntry>;
+    monthActuals: Record<number, number>;
+  };
+  const deptMap = new Map<string, Map<string, EmpEntry>>();
 
-  // ── Group by dept → employee ───────────────────────────────────────────────
-  const deptMap = new Map<string, Map<string, { employee: any; totalPlanned: number; actualHrs: number; projects: any[] }>>();
   for (const p of plans) {
     const dept  = p.employee.department;
     const empId = p.employee.id;
+
     if (!deptMap.has(dept)) deptMap.set(dept, new Map());
     const empMap = deptMap.get(dept)!;
+
     if (!empMap.has(empId)) {
-      empMap.set(empId, {
-        employee:     p.employee,
-        totalPlanned: 0,
-        actualHrs:    actualMap.get(empId) ?? 0,
-        projects:     [],
-      });
+      const actuals: Record<number, number> = {};
+      for (const m of months) actuals[m] = actualMap.get(`${empId}|${m}`) ?? 0;
+      empMap.set(empId, { employee: p.employee, projects: new Map(), monthActuals: actuals });
     }
     const emp = empMap.get(empId)!;
-    emp.totalPlanned += p.plannedHrs;
-    emp.projects.push({
-      projectId:     p.projectId,
-      projectNumber: p.project.projectNumber,
-      projectName:   p.project.projectName,
-      planStatus:    p.project.planStatus,
-      plannedHrs:    p.plannedHrs,
-    });
+
+    const projId = p.project.id;
+    if (!emp.projects.has(projId)) {
+      emp.projects.set(projId, {
+        projectId: projId, projectNumber: p.project.projectNumber,
+        projectName: p.project.projectName, planStatus: p.project.planStatus,
+        monthPlans: {},
+      });
+    }
+    emp.projects.get(projId)!.monthPlans[p.month] = (emp.projects.get(projId)!.monthPlans[p.month] ?? 0) + p.plannedHrs;
   }
 
   const departments = Array.from(deptMap.entries())
@@ -115,13 +140,14 @@ export async function GET(req: NextRequest) {
     .map(([name, empMap]) => ({
       name,
       employees: Array.from(empMap.values())
-        .sort((a, b) => a.employee.name.localeCompare(b.employee.name)),
+        .sort((a, b) => a.employee.name.localeCompare(b.employee.name))
+        .map((e) => ({
+          employee: e.employee,
+          monthActuals: e.monthActuals,
+          projects: Array.from(e.projects.values())
+            .sort((a, b) => a.projectNumber.localeCompare(b.projectNumber)),
+        })),
     }));
 
-  return NextResponse.json({
-    year, month, standardHrs,
-    workingDays: workingDays - holidayWorkdays,
-    holidays: holidays.map((h) => ({ date: h.date, name: h.name })),
-    departments,
-  });
+  return NextResponse.json({ year, months: monthMeta, departments });
 }
