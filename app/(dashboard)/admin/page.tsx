@@ -17,8 +17,8 @@ interface ProjectRow {
   }[];
 }
 interface Summary {
-  total: number; submitted: number; draft: number; missing: number; weekStart: string; weekEnd: string;
-  weekCapacity: number; // holiday-adjusted weekly hours ceiling (default 40)
+  total: number; submitted: number; draft: number; missing: number; rejected: number; weekStart: string; weekEnd: string;
+  weekCapacity: number;
 }
 
 export default function AdminPage() {
@@ -29,7 +29,7 @@ export default function AdminPage() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all"|"submitted"|"approved"|"draft"|"missing">("all");
+  const [filter, setFilter] = useState<"all"|"submitted"|"approved"|"rejected"|"draft"|"missing">("all");
   const [search, setSearch] = useState("");
   const [acting, setActing] = useState<Set<string>>(new Set());
   const [view, setView] = useState<"employee"|"project">("project");
@@ -174,11 +174,12 @@ export default function AdminPage() {
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
-          <SummaryCard label="พนักงานทั้งหมด" value={summary.total}     color="bg-blue-900"  icon="👥" onClick={() => setFilter("all")}       active={filter === "all"} />
-          <SummaryCard label="รออนุมัติ"       value={summary.submitted} color="bg-amber-500" icon="📋" onClick={() => setFilter("submitted")} active={filter === "submitted"} />
-          <SummaryCard label="อนุมัติแล้ว"     value={approvedCount}     color="bg-green-600" icon="✓"  onClick={() => setFilter("approved")}  active={filter === "approved"} />
-          <SummaryCard label="Draft"           value={summary.draft}     color="bg-gray-500"  icon="✏️" onClick={() => setFilter("draft")}     active={filter === "draft"} />
-          <SummaryCard label="ยังไม่ส่ง"       value={summary.missing}   color="bg-red-600"   icon="⚠"  onClick={() => setFilter("missing")}   active={filter === "missing"} />
+          <SummaryCard label="พนักงานทั้งหมด" value={summary.total}          color="bg-blue-900"  icon="👥" onClick={() => setFilter("all")}       active={filter === "all"} />
+          <SummaryCard label="รออนุมัติ"       value={summary.submitted}      color="bg-amber-500" icon="📋" onClick={() => setFilter("submitted")} active={filter === "submitted"} />
+          <SummaryCard label="อนุมัติแล้ว"     value={approvedCount}          color="bg-green-600" icon="✓"  onClick={() => setFilter("approved")}  active={filter === "approved"} />
+          <SummaryCard label="ไม่อนุมัติ"      value={summary.rejected ?? 0}  color="bg-red-700"   icon="✗"  onClick={() => setFilter("rejected")}  active={filter === "rejected"} />
+          <SummaryCard label="Draft"           value={summary.draft}          color="bg-gray-500"  icon="✏️" onClick={() => setFilter("draft")}     active={filter === "draft"} />
+          <SummaryCard label="ยังไม่ส่ง"       value={summary.missing}        color="bg-red-600"   icon="⚠"  onClick={() => setFilter("missing")}   active={filter === "missing"} />
         </div>
       )}
 
@@ -221,10 +222,10 @@ export default function AdminPage() {
 
         {view === "employee" && (
           <div className="flex gap-2 flex-wrap">
-            {(["all","submitted","approved","draft","missing"] as const).map((f) => (
+            {(["all","submitted","approved","rejected","draft","missing"] as const).map((f) => (
               <button key={f} onClick={() => setFilter(f)}
                 className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${filter === f ? "bg-blue-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                {f === "submitted" ? "รออนุมัติ" : f === "approved" ? "อนุมัติแล้ว" : f === "draft" ? "Draft" : f === "missing" ? "ยังไม่ส่ง" : "ทั้งหมด"}
+                {f === "submitted" ? "รออนุมัติ" : f === "approved" ? "อนุมัติแล้ว" : f === "rejected" ? "ไม่อนุมัติ" : f === "draft" ? "Draft" : f === "missing" ? "ยังไม่ส่ง" : "ทั้งหมด"}
               </button>
             ))}
           </div>
@@ -316,13 +317,20 @@ export default function AdminPage() {
                       <td className="text-center">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
                           {isPD && emp.status === "submitted" && emp.timesheetId && (
-                            <button onClick={() => act(emp.timesheetId!, "approve")}
-                              disabled={acting.has(emp.timesheetId!)}
-                              className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
-                              ✓ อนุมัติ
-                            </button>
+                            <>
+                              <button onClick={() => act(emp.timesheetId!, "approve")}
+                                disabled={acting.has(emp.timesheetId!)}
+                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
+                                ✓ อนุมัติ
+                              </button>
+                              <button onClick={() => act(emp.timesheetId!, "reject")}
+                                disabled={acting.has(emp.timesheetId!)}
+                                className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
+                                ✗ ไม่อนุมัติ
+                              </button>
+                            </>
                           )}
-                          {["submitted","approved"].includes(emp.status) && emp.timesheetId && (
+                          {["submitted","approved","rejected"].includes(emp.status) && emp.timesheetId && (
                             <button onClick={() => act(emp.timesheetId!, "unlock")}
                               disabled={acting.has(emp.timesheetId!)}
                               className="text-xs text-amber-600 hover:text-amber-700 hover:underline disabled:opacity-50">
@@ -463,11 +471,18 @@ export default function AdminPage() {
                         <td className="text-center">
                           <div className="flex items-center justify-center gap-2">
                             {isPD && emp.status === "submitted" && (
-                              <button onClick={() => act(emp.timesheetId, "approve")}
-                                disabled={acting.has(emp.timesheetId)}
-                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
-                                ✓
-                              </button>
+                              <>
+                                <button onClick={() => act(emp.timesheetId, "approve")}
+                                  disabled={acting.has(emp.timesheetId)}
+                                  className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
+                                  ✓
+                                </button>
+                                <button onClick={() => act(emp.timesheetId, "reject")}
+                                  disabled={acting.has(emp.timesheetId)}
+                                  className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
+                                  ✗
+                                </button>
+                              </>
                             )}
                             {isAdmin && (
                               <Link href={`/admin/edit?empId=${emp.id}&week=${format(currentWeek, "yyyy-MM-dd")}`}
@@ -495,10 +510,11 @@ export default function AdminPage() {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    submitted: { label: "รออนุมัติ",    cls: "bg-amber-100 text-amber-800" },
+    submitted: { label: "รออนุมัติ",     cls: "bg-amber-100 text-amber-800" },
     approved:  { label: "✓ อนุมัติแล้ว", cls: "bg-green-100 text-green-800" },
-    draft:     { label: "Draft",         cls: "bg-gray-100 text-gray-600" },
-    missing:   { label: "ยังไม่ส่ง",    cls: "bg-red-100 text-red-700" },
+    rejected:  { label: "✗ ไม่อนุมัติ",  cls: "bg-red-100 text-red-800" },
+    draft:     { label: "Draft",          cls: "bg-gray-100 text-gray-600" },
+    missing:   { label: "ยังไม่ส่ง",     cls: "bg-red-50 text-red-500" },
   };
   const s = map[status] ?? map.missing;
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;

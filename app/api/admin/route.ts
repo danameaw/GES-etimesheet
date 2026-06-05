@@ -73,6 +73,7 @@ export async function GET(req: NextRequest) {
   const submitted = employeeRows.filter((e) => e.status === "submitted").length;
   const draft     = employeeRows.filter((e) => e.status === "draft").length;
   const missing   = employeeRows.filter((e) => e.status === "missing").length;
+  const rejected  = employeeRows.filter((e) => e.status === "rejected").length;
 
   // ── Project-view grouping ──────────────────────────────────────────────────
   let projectRows: any[] = [];
@@ -142,6 +143,7 @@ export async function GET(req: NextRequest) {
       submitted,
       draft,
       missing,
+      rejected,
       weekStart,
       weekEnd,
       weekCapacity: 40,

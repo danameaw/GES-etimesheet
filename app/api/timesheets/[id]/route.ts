@@ -31,21 +31,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   if (action === "approve") {
-    // ONLY PM can approve timesheets
-    if (role !== "pd" && role !== "md") {
-      return NextResponse.json({ error: "Only PM can approve timesheets" }, { status: 403 });
-    }
+    if (role !== "pd" && role !== "md")
+      return NextResponse.json({ error: "Only PD can approve timesheets" }, { status: 403 });
+    await prisma.timesheet.update({ where: { id: params.id }, data: { status: "approved" } });
+    await prisma.auditLog.create({ data: { employeeId: (session.user as any).id, action: "APPROVE_TIMESHEET", detail: `Approved timesheet ${params.id}` } });
+    return NextResponse.json({ success: true });
+  }
+
+  if (action === "reject") {
+    if (role !== "pd" && role !== "md")
+      return NextResponse.json({ error: "Only PD can reject timesheets" }, { status: 403 });
+    // Reject → set status back to draft so employee must re-submit
     await prisma.timesheet.update({
       where: { id: params.id },
-      data: { status: "approved" },
+      data: { status: "rejected", submittedAt: null },
     });
-    await prisma.auditLog.create({
-      data: {
-        employeeId: (session.user as any).id,
-        action: "APPROVE_TIMESHEET",
-        detail: `Approved timesheet ${params.id}`,
-      },
-    });
+    await prisma.auditLog.create({ data: { employeeId: (session.user as any).id, action: "REJECT_TIMESHEET", detail: `Rejected timesheet ${params.id}` } });
     return NextResponse.json({ success: true });
   }
 
