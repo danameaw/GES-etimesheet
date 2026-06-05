@@ -259,70 +259,58 @@ export default function TimesheetPage() {
       {/* ── Holiday Notice ── */}
       {holidays.length > 0 && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 overflow-hidden">
-          {/* Header bar */}
           <div className="flex items-center gap-2 px-4 py-2.5 bg-red-100 border-b border-red-200">
             <span className="text-lg">🏖️</span>
             <span className="font-semibold text-red-800 text-sm">
               วันหยุดในสัปดาห์นี้ ({holidays.length} วัน)
             </span>
-            {weekdayHolidays.length > 0 && (
-              <span className="ml-auto text-xs text-red-600 font-medium bg-red-200 px-2.5 py-0.5 rounded-full">
-                กรุณาลง Leave/Holiday (1001) ในวันหยุด
-              </span>
-            )}
           </div>
-
-          {/* Holiday cards */}
           <div className="flex flex-wrap gap-3 p-4">
             {holidays.map((h) => {
-              const d    = new Date(h.date.slice(0, 10) + "T00:00:00");
-              const dow  = d.getDay();
-              const DAY_TH = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
+              const d         = new Date(h.date.slice(0, 10) + "T00:00:00");
+              const dow       = d.getDay();
+              const DAY_TH    = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
               const isWeekend = dow === 0 || dow === 6;
               return (
                 <div key={h.id}
                   className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm font-medium shadow-sm ${
-                    isWeekend
-                      ? "bg-white border-gray-200 text-gray-600"
-                      : "bg-red-600 border-red-700 text-white"
+                    isWeekend ? "bg-white border-gray-200 text-gray-600" : "bg-red-600 border-red-700 text-white"
                   }`}>
                   <div className="text-center leading-tight">
-                    <div className={`text-xs font-normal ${isWeekend ? "text-gray-400" : "text-red-200"}`}>
-                      {DAY_TH[dow]}
-                    </div>
+                    <div className={`text-xs font-normal ${isWeekend ? "text-gray-400" : "text-red-200"}`}>{DAY_TH[dow]}</div>
                     <div className="text-xl font-bold leading-none">{format(d, "d")}</div>
-                    <div className={`text-xs ${isWeekend ? "text-gray-400" : "text-red-200"}`}>
-                      {format(d, "MMM")}
-                    </div>
+                    <div className={`text-xs ${isWeekend ? "text-gray-400" : "text-red-200"}`}>{format(d, "MMM")}</div>
                   </div>
                   <div>
                     <div>{h.name}</div>
-                    {!isWeekend && (
-                      <div className="text-xs font-normal text-red-200 mt-0.5">
-                        ลง: 1001 Leave/Holiday
-                      </div>
-                    )}
-                    {isWeekend && (
-                      <div className="text-xs font-normal text-gray-400 mt-0.5">วันหยุดสุดสัปดาห์</div>
-                    )}
+                    {isWeekend && <div className="text-xs font-normal text-gray-400 mt-0.5">วันหยุดสุดสัปดาห์</div>}
                   </div>
                 </div>
               );
             })}
           </div>
-
-          {/* Footer hint */}
-          {weekdayHolidays.length > 0 && (
-            <div className="px-4 pb-3 text-xs text-red-600 flex items-center gap-1.5">
-              <span>💡</span>
-              <span>
-                สำหรับวันหยุดทำการ (<strong>{weekdayHolidays.map((h) => format(h.date, "EEE dd MMM")).join(", ")}</strong>)
-                — ลงชั่วโมง <strong>8h</strong> ด้วย task code <strong>1001 Leave/Holiday</strong> เพื่อให้ยอดครบ 40h
-              </span>
-            </div>
-          )}
         </div>
       )}
+
+      {/* ── Leave / Holiday Code Reference — แสดงทุกสัปดาห์ ── */}
+      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+        <p className="text-xs font-semibold text-blue-800 mb-2">📋 กรณีลา / วันหยุด ให้ลง Code ต่อไปนี้ (Project: GES-OH)</p>
+        <div className="flex flex-wrap gap-x-6 gap-y-1">
+          {[
+            { code: "1001", name: "Holidays" },
+            { code: "1002", name: "Annual Leave" },
+            { code: "1003", name: "Personal Leave" },
+            { code: "1004", name: "Sick Leave" },
+            { code: "1005", name: "Others" },
+          ].map(({ code, name }) => (
+            <span key={code} className="text-xs text-blue-700">
+              <span className="font-mono font-semibold">{code}</span>
+              <span className="text-blue-500 mx-1">–</span>
+              {name}
+            </span>
+          ))}
+        </div>
+      </div>
 
       {/* Message */}
       {message && (
@@ -355,7 +343,7 @@ export default function TimesheetPage() {
       {totalWeekHrs > 0 && totalWeekHrs < 40 && (
         <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-2">
           <span>⚠️</span>
-          <span>Total hours ({totalWeekHrs}h) is below 40h. Please complete your timesheet or log Leave/Holiday hours for remaining time.</span>
+          <span>ชั่วโมงรวม ({totalWeekHrs}h) ยังไม่ครบ 40h กรุณากรอกข้อมูลให้ครบ</span>
         </div>
       )}
 
@@ -522,7 +510,7 @@ export default function TimesheetPage() {
             </span> / 40h
             {weekdayHolidays.length > 0 && (
               <span className="text-xs text-red-500 ml-1">
-                ({weekdayHolidays.length} วันหยุด — ลง 1001 Leave/Holiday)
+                ({weekdayHolidays.length} วันหยุด)
               </span>
             )}
           </span>
