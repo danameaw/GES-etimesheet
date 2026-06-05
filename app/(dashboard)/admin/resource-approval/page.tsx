@@ -105,11 +105,20 @@ export default function ResourceApprovalPage() {
         </div>
       )}
 
-      {/* ── Tab: Overview (MD only, view-only, plan vs actual per person) ── */}
+      {/* ── Tab: Overview รายโครงการ (view-only) ── */}
       {isMD && mdView === "projects" ? (
         <ProjectOverview />
 
-      /* ── Tab: Workload / Approve Plan ── */
+      /* ── Tab: Approve Plan (project-centric, Mgmt+PM only) ── */
+      ) : isMD && mdView === "approve" ? (
+        <ApprovePlanByProject
+          data={data}
+          loading={loading}
+          acting={acting}
+          approveProject={approveProject}
+        />
+
+      /* ── Tab: Plan/Actual รายแผนก (workload, view-only for MD) ── */
       ) : loading ? (
         <div className="ges-card p-10 text-center text-gray-400 animate-pulse">กำลังโหลด…</div>
       ) : !data || data.months.length === 0 ? (
@@ -119,19 +128,17 @@ export default function ResourceApprovalPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* GES Management: show all their dept plans with approve */}
           {displayDepts(data.departments).map((dept) => (
             <DeptTable
               key={dept.name}
               dept={dept}
               months={data.months}
-              canApprove={!isMD || mdView === "approve"}  // MD: approve only in Approve tab
+              canApprove={!isMD}   // GES Management can approve, MD in workload tab = view only
               acting={acting}
               approveProject={approveProject}
             />
           ))}
-          {isMD && mdView === "approve" && displayDepts(data.departments).length === 0 && (
-            <div className="ges-card p-10 text-center text-gray-400">ไม่มีข้อมูล Plan สำหรับ Management / Project Management</div>
-          )}
         </div>
       )}
     </div>
@@ -260,6 +267,157 @@ function DeptTable({ dept, months, canApprove, acting, approveProject }: {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Approve Plan by Project (MD — Management + Project Management only) ──────
+function ApprovePlanByProject({ data, loading, acting, approveProject }: {
+  data: WorkloadData | null; loading: boolean;
+  acting: string | null; approveProject: (id: string) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  if (loading) return <div className="ges-card p-10 text-center text-gray-400 animate-pulse">กำลังโหลด…</div>;
+  if (!data || data.months.length === 0) return (
+    <div className="ges-card p-12 text-center text-gray-400">
+      <p className="text-4xl mb-3">📋</p>
+      <p className="font-medium">ไม่มีข้อมูล Plan ในปี {data?.year}</p>
+    </div>
+  );
+
+  // Extract unique projects from Management + Project Management depts
+  const targetDepts = data.departments.filter((d) => MD_APPROVE_DEPTS.includes(d.name));
+
+  // Build project map: projectId → { projectNumber, projectName, planStatus, employees: [{emp, monthPlans}] }
+  const projMap = new Map<string, {
+    projectId: string; projectNumber: string; projectName: string; planStatus: string;
+    employees: { employee: any; monthPlans: Record<number, number> }[];
+  }>();
+
+  for (const dept of targetDepts) {
+    for (const empData of dept.employees) {
+      for (const proj of empData.projects) {
+        if (!projMap.has(proj.projectId)) {
+          projMap.set(proj.projectId, {
+            projectId: proj.projectId,
+            projectNumber: proj.projectNumber,
+            projectName: proj.projectName,
+            planStatus: proj.planStatus,
+            employees: [],
+          });
+        }
+        projMap.get(proj.projectId)!.employees.push({
+          employee: empData.employee,
+          monthPlans: proj.monthPlans,
+        });
+      }
+    }
+  }
+
+  const projects = Array.from(projMap.values()).sort((a, b) => a.projectNumber.localeCompare(b.projectNumber));
+
+  if (projects.length === 0) return (
+    <div className="ges-card p-10 text-center text-gray-400">
+      ไม่มีข้อมูล Plan สำหรับ Department Management / Project Management
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {projects.map((proj) => {
+        const isExpanded  = expandedId === proj.projectId;
+        const isSubmitted = proj.planStatus === "submitted";
+        const isApproved  = proj.planStatus === "approved";
+        const totalPlan   = proj.employees.reduce((s, e) =>
+          s + data.months.reduce((ms, m) => ms + (e.monthPlans[m.month] ?? 0), 0), 0);
+
+        return (
+          <div key={proj.projectId} className="ges-card overflow-hidden">
+            {/* Project header */}
+            <div className={`px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b ${
+              isApproved  ? "bg-green-50 border-green-100"
+              : isSubmitted ? "bg-amber-50 border-amber-100"
+              : "bg-gray-50 border-gray-100"
+            }`}>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs font-semibold text-blue-600">{proj.projectNumber}</span>
+                  <PlanStatusBadge status={proj.planStatus} />
+                </div>
+                <h3 className="font-bold text-gray-900 mt-0.5">{proj.projectName}</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  {proj.employees.length} คน · Plan รวม: {totalPlan}h
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setExpandedId(isExpanded ? null : proj.projectId)}
+                  className="text-xs border border-blue-200 text-blue-600 px-3 py-1.5 rounded hover:bg-blue-50">
+                  {isExpanded ? "ซ่อน" : "ดูรายละเอียด"}
+                </button>
+                {isSubmitted && (
+                  <button onClick={() => approveProject(proj.projectId)} disabled={acting === proj.projectId}
+                    className="text-sm bg-green-600 text-white px-4 py-1.5 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium">
+                    {acting === proj.projectId ? "…" : "✓ Approve"}
+                  </button>
+                )}
+                {isApproved && (
+                  <span className="text-sm text-green-600 font-semibold">✓ Approved แล้ว</span>
+                )}
+              </div>
+            </div>
+
+            {/* Employee detail table */}
+            {isExpanded && (
+              <div className="overflow-x-auto">
+                <table className="text-sm w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left px-4 py-2 font-semibold text-gray-700 min-w-[180px]">พนักงาน</th>
+                      <th className="text-left px-3 py-2 font-semibold text-gray-700">แผนก</th>
+                      {data.months.map((m) => (
+                        <th key={m.month} className="px-3 py-2 text-center font-semibold text-gray-700 min-w-[100px]">
+                          <div>{m.name}</div>
+                          <div className="text-xs font-normal text-gray-400">({m.standardHrs}hr)</div>
+                        </th>
+                      ))}
+                      <th className="px-3 py-2 text-center font-semibold text-gray-700">รวม</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proj.employees.map((e, i) => {
+                      const empTotal = data.months.reduce((s, m) => s + (e.monthPlans[m.month] ?? 0), 0);
+                      return (
+                        <tr key={e.employee.id} className={`border-t border-gray-100 ${i%2===0?"bg-white":"bg-gray-50/50"} hover:bg-blue-50/30`}>
+                          <td className="px-4 py-2">
+                            <div className="font-medium text-gray-800">{e.employee.name}</div>
+                            <div className="text-xs text-gray-400">{e.employee.employeeId}</div>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-500">{e.employee.department}</td>
+                          {data.months.map((m) => {
+                            const planned = e.monthPlans[m.month] ?? 0;
+                            const over    = planned > m.standardHrs;
+                            return (
+                              <td key={m.month} className="px-3 py-2 text-center">
+                                {planned > 0
+                                  ? <span className={`font-semibold ${over ? "text-red-600" : "text-blue-700"}`}>{planned}h</span>
+                                  : <span className="text-gray-300">–</span>}
+                              </td>
+                            );
+                          })}
+                          <td className="px-3 py-2 text-center font-bold text-blue-900">
+                            {empTotal > 0 ? `${empTotal}h` : "–"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
