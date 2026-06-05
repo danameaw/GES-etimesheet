@@ -114,8 +114,11 @@ export default function TimesheetPage() {
     setHolidays(data.holidays || []);
 
     if (data.timesheet) {
-      setTimesheetStatus(data.timesheet.status);
-      if (data.timesheet.entries.length > 0) {
+      const hasEntries = data.timesheet.entries.some((e: any) =>
+        (e.monHrs + e.tueHrs + e.wedHrs + e.thuHrs + e.friHrs + e.satHrs + e.sunHrs) > 0
+      );
+      setTimesheetStatus(hasEntries ? data.timesheet.status : "missing");
+      if (hasEntries) {
         setRows(data.timesheet.entries.map((e: any) => ({
           id: e.id,
           projectId: e.projectId,
@@ -159,6 +162,10 @@ export default function TimesheetPage() {
     const validRows = rows.filter((r) => r.projectId && r.taskCodeId);
     if (validRows.length === 0) {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
+      return;
+    }
+    if (action === "submit" && totalWeekHrs === 0) {
+      setMessage({ type: "error", text: "ไม่สามารถ Submit ได้ กรุณากรอกชั่วโมงก่อน" });
       return;
     }
     if (action === "submit" && totalWeekHrs < 40) {

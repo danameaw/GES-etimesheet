@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
-  if (!["admin", "pd", "md"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd", "md", "ges_management"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const weekParam = searchParams.get("week");
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       department:  emp.department,
       position:    emp.position,
       timesheetId: ts?.id || null,
-      status:      ts?.status || "missing",
+      status:      (ts?.status === "submitted" && totalHrs === 0) ? "draft" : ts?.status || "missing",
       submittedAt: ts?.submittedAt || null,
       totalHrs,
     };
