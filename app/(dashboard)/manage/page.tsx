@@ -235,6 +235,97 @@ function ProjectsTab() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// TASKS TAB — template data
+// ══════════════════════════════════════════════════════════════════════════
+
+const PROJECT_TASKS_TEMPLATE = [
+  { code: "0011", name: "Project Administration - General",                    category: "Project Management & Administration" },
+  { code: "0012", name: "BOI",                                                  category: "Project Management & Administration" },
+  { code: "0013", name: "Project Director",                                     category: "Project Management & Administration" },
+  { code: "0014", name: "Project Manager",                                      category: "Project Management & Administration" },
+  { code: "0015", name: "Engineering Manager",                                  category: "Project Management & Administration" },
+  { code: "0016", name: "Construction Manager",                                 category: "Project Management & Administration" },
+  { code: "0017", name: "Commissioning Manager",                                category: "Project Management & Administration" },
+  { code: "0110", name: "Civil Engineering Administration",                     category: "Civil Engineering" },
+  { code: "0130", name: "Civil Engineering Permiting and Licensing",            category: "Civil Engineering" },
+  { code: "0140", name: "Civil Engineering Conceptual Design",                  category: "Civil Engineering" },
+  { code: "0150", name: "Civil Engineering Detailed Design",                    category: "Civil Engineering" },
+  { code: "0161", name: "Civil Engineering - Preaward",                         category: "Civil Engineering" },
+  { code: "0162", name: "Civil Engineering - Postaward",                        category: "Civil Engineering" },
+  { code: "0163", name: "Civil Engineering - FAT",                              category: "Civil Engineering" },
+  { code: "0180", name: "Civil Engineering - Construction Support",             category: "Civil Engineering" },
+  { code: "0191", name: "Civil Engineering - As-Builts",                        category: "Civil Engineering" },
+  { code: "0210", name: "Mechanical Engineering Administration",                category: "Mechanical Engineering" },
+  { code: "0230", name: "Mechanical Engineering Permiting and Licensing",       category: "Mechanical Engineering" },
+  { code: "0240", name: "Mechanical Engineering Conceptual Design",             category: "Mechanical Engineering" },
+  { code: "0250", name: "Mechanical Engineering Detailed Design",               category: "Mechanical Engineering" },
+  { code: "0261", name: "Mechanical Engineering - Preaward",                    category: "Mechanical Engineering" },
+  { code: "0262", name: "Mechanical Engineering - Postaward",                   category: "Mechanical Engineering" },
+  { code: "0263", name: "Mechanical Engineering - FAT",                         category: "Mechanical Engineering" },
+  { code: "0280", name: "Mechanical Engineering - Construction Support",        category: "Mechanical Engineering" },
+  { code: "0291", name: "Mechanical Engineering - As-Builts",                   category: "Mechanical Engineering" },
+  { code: "0310", name: "Control/Electrical Engineering Administration",        category: "Control/Electrical Engineering" },
+  { code: "0330", name: "Control/Electrical Engineering Permiting and Licensing", category: "Control/Electrical Engineering" },
+  { code: "0340", name: "Control/Electrical Engineering Conceptual Design",     category: "Control/Electrical Engineering" },
+  { code: "0350", name: "Control/Electrical Engineering Detailed Design",       category: "Control/Electrical Engineering" },
+  { code: "0361", name: "Control/Electrical Engineering - Preaward",            category: "Control/Electrical Engineering" },
+  { code: "0362", name: "Control/Electrical Engineering - Postaward",           category: "Control/Electrical Engineering" },
+  { code: "0363", name: "Control/Electrical Engineering - FAT",                 category: "Control/Electrical Engineering" },
+  { code: "0380", name: "Control/Electrical Engineering - Construction Support", category: "Control/Electrical Engineering" },
+  { code: "0391", name: "Control/Electrical Engineering - As-Builts",           category: "Control/Electrical Engineering" },
+  { code: "0510", name: "Project Controls Administration",                      category: "Project Controls" },
+  { code: "0610", name: "Procurement Administration",                           category: "Procurement" },
+  { code: "0660", name: "Procurement - Bid List Development (Equipment)",       category: "Procurement" },
+  { code: "0661", name: "Procurement - Bidding & Evaluation (Equipment)",       category: "Procurement" },
+  { code: "0662", name: "Procurement - Contract Negotiations & Award (Equipment)", category: "Procurement" },
+  { code: "0663", name: "Procurement - Expediting (Equipment)",                 category: "Procurement" },
+  { code: "0664", name: "Procurement - Logistics (Equipment)",                  category: "Procurement" },
+  { code: "0665", name: "Procurement - Warranty Administration (Equipment)",    category: "Procurement" },
+  { code: "0666", name: "Procurement - Bid List Development (EPC)",             category: "Procurement" },
+  { code: "0667", name: "Procurement - Bidding & Evaluation (EPC)",             category: "Procurement" },
+  { code: "0668", name: "Procurement - Contract Negotiations & Award (EPC)",    category: "Procurement" },
+  { code: "1710", name: "Site Manager",                                         category: "Construction" },
+  { code: "1711", name: "Site Engineer",                                        category: "Construction" },
+  { code: "1712", name: "Safety Officer",                                       category: "Construction" },
+  { code: "1713", name: "Commissioning Manager",                                category: "Construction" },
+];
+
+const OH_TASKS_TEMPLATE = [
+  { code: "1001", name: "Holidays",                                             category: "Holiday" },
+  { code: "1002", name: "Annual Leave",                                         category: "Holiday" },
+  { code: "1003", name: "Personal Leave",                                       category: "Holiday" },
+  { code: "1004", name: "Sick Leave",                                           category: "Holiday" },
+  { code: "1005", name: "Others",                                               category: "Holiday" },
+  { code: "2001", name: "Internal Training",                                    category: "Training" },
+  { code: "2002", name: "External Training",                                    category: "Training" },
+  { code: "3001", name: "Gulf Corporate Meeting",                               category: "Meetings" },
+  { code: "3002", name: "Business Units",                                       category: "Meetings" },
+  { code: "3003", name: "Project Companies",                                    category: "Meetings" },
+  { code: "3004", name: "GES Board",                                            category: "Meetings" },
+  { code: "3005", name: "GES Inter Department",                                 category: "Meetings" },
+  { code: "3101", name: "Domestic Traveling",                                   category: "Traveling" },
+  { code: "3102", name: "Oversea Traveling",                                    category: "Traveling" },
+  { code: "4001", name: "Gulf and Affiliates",                                  category: "Business Development" },
+  { code: "4002", name: "External",                                             category: "Business Development" },
+  { code: "4003", name: "Marketing",                                            category: "Business Development" },
+  { code: "5001", name: "R&D / Technical Investigation / Procedure Development Work", category: "Lessons Learned & Process Improvement" },
+  { code: "5002", name: "Project Review",                                       category: "Lessons Learned & Process Improvement" },
+  { code: "8101", name: "General Administration",                               category: "Department/Corporate Work" },
+  { code: "8102", name: "Compliance",                                           category: "Department/Corporate Work" },
+  { code: "8103", name: "Strategic Planning",                                   category: "Department/Corporate Work" },
+  { code: "8104", name: "Performance Management",                               category: "Department/Corporate Work" },
+  { code: "8105", name: "HR Development",                                       category: "Department/Corporate Work" },
+  { code: "8106", name: "Interview",                                            category: "Department/Corporate Work" },
+  { code: "9001", name: "Unassigned / Waiting for Assignment",                  category: "Unassigned" },
+];
+
+export const OH_CATEGORIES = new Set([
+  "Holiday", "Training", "Meetings", "Traveling",
+  "Business Development", "Lessons Learned & Process Improvement",
+  "Department/Corporate Work", "Unassigned",
+]);
+
+// ══════════════════════════════════════════════════════════════════════════
 // TASKS TAB
 // ══════════════════════════════════════════════════════════════════════════
 function TasksTab() {
@@ -244,6 +335,8 @@ function TasksTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
+  const [taskType, setTaskType] = useState<"project" | "oh">("project");
+  const [seeding, setSeeding] = useState(false);
   const emptyForm = { code: "", name: "", category: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -257,8 +350,27 @@ function TasksTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // All unique categories for grouping
-  const categories = Array.from(new Set(tasks.map((t) => t.category))).sort();
+  // Split tasks into project vs OH
+  const isOH = (t: TaskCode) => OH_CATEGORIES.has(t.category);
+  const displayTasks = tasks.filter((t) => taskType === "oh" ? isOH(t) : !isOH(t));
+
+  const categories = Array.from(new Set(displayTasks.map((t) => t.category))).sort();
+  const templateCategories = taskType === "project"
+    ? Array.from(new Set(PROJECT_TASKS_TEMPLATE.map((t) => t.category)))
+    : Array.from(new Set(OH_TASKS_TEMPLATE.map((t) => t.category)));
+
+  const handleLoadTemplate = async () => {
+    const template = taskType === "project" ? PROJECT_TASKS_TEMPLATE : OH_TASKS_TEMPLATE;
+    if (!confirm(`โหลด ${template.length} รหัสงานจาก template? (รายการที่มีอยู่แล้วจะถูกอัพเดตชื่อและหมวดหมู่)`)) return;
+    setSeeding(true);
+    await fetch("/api/manage/tasks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tasks: template }),
+    });
+    setSeeding(false);
+    load();
+  };
 
   const startEdit = (t: TaskCode) => {
     setEditId(t.id);
@@ -282,20 +394,42 @@ function TasksTab() {
     load();
   };
 
-  const filtered = tasks.filter((t) => {
+  const filtered = displayTasks.filter((t) => {
     const matchSearch = !search || t.code.toLowerCase().includes(search.toLowerCase()) || t.name.toLowerCase().includes(search.toLowerCase()) || t.category.toLowerCase().includes(search.toLowerCase());
     return matchSearch && (showInactive ? true : t.isActive);
   });
 
   return (
     <div className="space-y-5">
+      {/* Sub-tabs: Project Tasks / OH Tasks */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button onClick={() => { setTaskType("project"); setShowAdd(false); setEditId(null); }}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${taskType === "project" ? "bg-white border border-b-white border-gray-200 -mb-px text-blue-900 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
+          📋 Project Tasks
+        </button>
+        <button onClick={() => { setTaskType("oh"); setShowAdd(false); setEditId(null); }}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${taskType === "oh" ? "bg-white border border-b-white border-gray-200 -mb-px text-blue-900 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
+          🏢 OH Tasks <span className="ml-1 text-xs text-orange-500 font-normal">(→ GES-OH)</span>
+        </button>
+      </div>
+
+      {taskType === "oh" && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2.5 text-sm text-orange-800 flex items-center gap-2">
+          ⚠️ OH Tasks จะถูกบังคับให้เลือก Project เป็น <strong>GES-OH – Overhead/Non-Project</strong> อัตโนมัติใน Timesheet
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3 items-center justify-between">
         <input className="ges-input max-w-xs" placeholder="ค้นหา code, ชื่อ, หมวดหมู่…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
             แสดงที่ปิดแล้ว
           </label>
+          <button onClick={handleLoadTemplate} disabled={seeding}
+            className="ges-btn-secondary text-sm">
+            {seeding ? "⏳ Loading…" : "🔄 Load from Template"}
+          </button>
           <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); }} className="ges-btn-primary text-sm">+ เพิ่มรหัสงาน</button>
         </div>
       </div>
@@ -306,16 +440,21 @@ function TasksTab() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Code *</label>
-              <input className="ges-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="e.g. ENG-001" />
+              <input className="ges-input font-mono" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="เช่น 0011" />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">ชื่องาน *</label>
               <input className="ges-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ชื่อกิจกรรม" />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">หมวดหมู่ *</label>
-              <input className="ges-input" list="cat-list" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="หมวดหมู่" />
-              <datalist id="cat-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+              <label className="block text-xs text-gray-500 mb-1">หมวดหมู่ (หัวข้อหลัก) *</label>
+              <select className="ges-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">-- เลือกหมวดหมู่ --</option>
+                {templateCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                {form.category && !templateCategories.includes(form.category) && (
+                  <option value={form.category}>{form.category} (custom)</option>
+                )}
+              </select>
             </div>
           </div>
           <div className="flex gap-2 mt-4">
@@ -330,9 +469,10 @@ function TasksTab() {
         <div className="space-y-4">
           {categories.filter((cat) => filtered.some((t) => t.category === cat)).map((cat) => (
             <div key={cat} className="ges-card overflow-hidden">
-              <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-100">
+              <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
                 <span className="font-semibold text-sm text-gray-700">{cat}</span>
-                <span className="ml-2 text-xs text-gray-400">({filtered.filter((t) => t.category === cat).length} รายการ)</span>
+                <span className="text-xs text-gray-400">({filtered.filter((t) => t.category === cat).length} รายการ)</span>
+                {OH_CATEGORIES.has(cat) && <span className="text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">OH</span>}
               </div>
               <table className="ges-table w-full">
                 <thead>
@@ -365,7 +505,14 @@ function TasksTab() {
               </table>
             </div>
           ))}
-          {filtered.length === 0 && <div className="ges-card p-10 text-center text-gray-400">ไม่พบรหัสงาน</div>}
+          {filtered.length === 0 && (
+            <div className="ges-card p-10 text-center text-gray-400">
+              <p>ยังไม่มีรหัสงาน</p>
+              <button onClick={handleLoadTemplate} disabled={seeding} className="ges-btn-primary text-sm mt-3">
+                🔄 Load from Template
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

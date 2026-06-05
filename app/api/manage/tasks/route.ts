@@ -49,6 +49,29 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ task });
 }
 
+// PUT — bulk upsert task codes from template
+export async function PUT(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const err = await requireAdmin(session);
+  if (err) return err;
+
+  const { tasks } = await req.json() as { tasks: { code: string; name: string; category: string }[] };
+  if (!Array.isArray(tasks) || tasks.length === 0)
+    return NextResponse.json({ error: "tasks array required" }, { status: 400 });
+
+  let upserted = 0;
+  for (const t of tasks) {
+    if (!t.code?.trim() || !t.name?.trim() || !t.category?.trim()) continue;
+    await prisma.taskCode.upsert({
+      where: { code: t.code.trim().toUpperCase() },
+      update: { name: t.name.trim(), category: t.category.trim(), isActive: true },
+      create: { code: t.code.trim().toUpperCase(), name: t.name.trim(), category: t.category.trim() },
+    });
+    upserted++;
+  }
+  return NextResponse.json({ success: true, upserted });
+}
+
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const err = await requireAdmin(session);

@@ -3,6 +3,13 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { format, addWeeks, subWeeks, startOfWeek } from "date-fns";
 
+// OH categories — ต้องใช้ Project GES-OH เท่านั้น
+const OH_CATEGORIES = new Set([
+  "Holiday", "Training", "Meetings", "Traveling",
+  "Business Development", "Lessons Learned & Process Improvement",
+  "Department/Corporate Work", "Unassigned",
+]);
+
 interface Project {
   id: string;
   projectNumber: string;
@@ -143,9 +150,25 @@ export default function TimesheetPage() {
   );
   const totalWeekHrs = totalByDay.reduce((a, b) => a + b, 0);
 
+  // Project GES-OH (projectType = "support" หรือ projectNumber เริ่มด้วย "GES-OH")
+  const ohProject = projects.find(
+    (p) => p.projectNumber.toUpperCase().startsWith("GES-OH") || p.projectType === "support"
+  );
+
   function updateRow(id: string, field: keyof TimesheetRow, value: string | number) {
     setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: field.endsWith("Hrs") ? Number(value) || 0 : value } : r))
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const updated = { ...r, [field]: field.endsWith("Hrs") ? Number(value) || 0 : value };
+        // ถ้าเปลี่ยน taskCode → เช็คว่าเป็น OH task ไหม
+        if (field === "taskCodeId") {
+          const task = taskCodes.find((t) => t.id === value);
+          if (task && OH_CATEGORIES.has(task.category) && ohProject) {
+            updated.projectId = ohProject.id;
+          }
+        }
+        return updated;
+      })
     );
   }
 
@@ -372,15 +395,22 @@ export default function TimesheetPage() {
           <tbody>
             {rows.map((row) => {
               const rowTotal = DAYS.reduce((sum, d) => sum + (Number(row[d.key]) || 0), 0);
+              const selectedTask = taskCodes.find((t) => t.id === row.taskCodeId);
+              const rowIsOH = selectedTask ? OH_CATEGORIES.has(selectedTask.category) : false;
+              // Task codes split into project vs OH groups
+              const projectTaskCodes = taskCodes.filter((t) => !OH_CATEGORIES.has(t.category));
+              const ohTaskCodes      = taskCodes.filter((t) =>  OH_CATEGORIES.has(t.category));
+              const projectCategories = Array.from(new Set(projectTaskCodes.map((t) => t.category))).sort();
+              const ohCategories      = Array.from(new Set(ohTaskCodes.map((t) => t.category))).sort();
               return (
                 <tr key={row.id}>
-                  {/* Project selector */}
+                  {/* Project selector — lock to GES-OH if OH task */}
                   <td>
                     <select
                       value={row.projectId}
                       onChange={(e) => updateRow(row.id, "projectId", e.target.value)}
-                      disabled={!canEdit}
-                      className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50"
+                      disabled={!canEdit || rowIsOH}
+                      className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${rowIsOH ? "border-orange-200 text-orange-700" : "border-gray-200"}`}
                     >
                       <option value="">-- Select Project --</option>
                       {projects.map((p) => (
@@ -389,9 +419,10 @@ export default function TimesheetPage() {
                         </option>
                       ))}
                     </select>
+                    {rowIsOH && <p className="text-xs text-orange-500 mt-0.5">🏢 OH Task</p>}
                   </td>
 
-                  {/* Task code selector */}
+                  {/* Task code selector — grouped: Project Tasks / OH Tasks */}
                   <td>
                     <select
                       value={row.taskCodeId}
@@ -400,9 +431,24 @@ export default function TimesheetPage() {
                       className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50"
                     >
                       <option value="">-- Task --</option>
-                      {taskCodes.map((t) => (
-                        <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
-                      ))}
+                      {projectCategories.length > 0 && (
+                        projectCategories.map((cat) => (
+                          <optgroup key={cat} label={`📋 ${cat}`}>
+                            {projectTaskCodes.filter((t) => t.category === cat).map((t) => (
+                              <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+                            ))}
+                          </optgroup>
+                        ))
+                      )}
+                      {ohCategories.length > 0 && (
+                        ohCategories.map((cat) => (
+                          <optgroup key={cat} label={`🏢 ${cat}`}>
+                            {ohTaskCodes.filter((t) => t.category === cat).map((t) => (
+                              <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+                            ))}
+                          </optgroup>
+                        ))
+                      )}
                     </select>
                   </td>
 

@@ -65,6 +65,9 @@ export default function ResourcePlanPage() {
   const [importing, startImport]     = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Standard hours per month (after holidays) — key: "year-month"
+  const [stdHours, setStdHours] = useState<Record<string, number>>({});
+
   // ── Load dept plan ──
   const load = useCallback(async (projectId?: string) => {
     setLoading(true);
@@ -98,6 +101,16 @@ export default function ResourcePlanPage() {
     }
   }, [selectedProject, load, loadEmp]);
 
+  // Fetch standard hours when months list is known
+  useEffect(() => {
+    if (months.length === 0) return;
+    const param = months.map((m) => `${m.year}-${String(m.month).padStart(2, "0")}`).join(",");
+    fetch(`/api/std-hours?months=${param}`)
+      .then((r) => r.json())
+      .then((d) => setStdHours(d.stdHours || {}));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject]);
+
   const selectedProj = projects.find((p) => p.id === selectedProject);
   const months = selectedProj
     ? (() => {
@@ -110,6 +123,15 @@ export default function ResourcePlanPage() {
   // Plan status is stored on the project itself
   const planStatus = selectedProj?.planStatus || "draft";
   const canEditPlan = planStatus === "draft";
+
+  /** ถ้ากรอก 0 < v ≤ 1.5 → ถือว่าเป็น MM multiplier แปลงเป็นชั่วโมงมาตรฐาน */
+  function resolveHrs(v: number, year: number, month: number): number {
+    if (v > 0 && v <= 1.5) {
+      const std = stdHours[`${year}-${month}`] ?? 0;
+      return Math.round(v * std);
+    }
+    return v;
+  }
 
   // ── User ID lookup with debounce ──
   function handleUserIdChange(val: string) {
@@ -520,10 +542,15 @@ export default function ResourcePlanPage() {
                               return (
                                 <td key={`${m.year}-${m.month}`} className="px-1 py-1 text-center">
                                   {canEditPlan ? (
-                                    <input type="number" min="0" step="8"
+                                    <input type="number" min="0" step="0.5"
                                       defaultValue={plan}
                                       key={`${emp.id}-${m.year}-${m.month}-${plan}`}
-                                      onBlur={(e) => { const v = Number(e.target.value); if (v !== plan) saveEmpPlan(emp.id, m.year, m.month, v); }}
+                                      onBlur={(e) => {
+                                        const raw = Number(e.target.value);
+                                        const v = resolveHrs(raw, m.year, m.month);
+                                        if (v !== raw) e.target.value = String(v);
+                                        if (v !== plan) saveEmpPlan(emp.id, m.year, m.month, v);
+                                      }}
                                       className={`w-16 text-center border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
                                         saving === key ? "border-blue-300 bg-blue-50" :
                                         plan > 0 ? "border-blue-200 text-blue-900 font-semibold" : "border-gray-200 text-gray-400"
