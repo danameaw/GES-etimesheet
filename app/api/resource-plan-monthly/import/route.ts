@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   // Verify PM owns the project (skip for admin)
   if (role === "pd") {
-    const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
+    const proj = await prisma.project.findFirst({ where: { id: projectId, OR: [{ pdId: empDbId }, { managerId: empDbId }] } });
     if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }
 

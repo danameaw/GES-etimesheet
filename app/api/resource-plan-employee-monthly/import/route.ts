@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing file or projectId" }, { status: 400 });
 
   if (role === "pd") {
-    const proj = await prisma.project.findFirst({ where: { id: projectId, managerId: empDbId } });
+    const proj = await prisma.project.findFirst({ where: { id: projectId, OR: [{ pdId: empDbId }, { managerId: empDbId }] } });
     if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }
 

@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pd" && proj.managerId !== empDbId)
+  if (role === "pd" && proj.pdId !== empDbId && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")
@@ -116,7 +116,7 @@ export async function DELETE(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pd" && proj.managerId !== empDbId)
+  if (role === "pd" && proj.pdId !== empDbId && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")
