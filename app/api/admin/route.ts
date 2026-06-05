@@ -70,10 +70,23 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const submitted = employeeRows.filter((e) => e.status === "submitted").length;
-  const draft     = employeeRows.filter((e) => e.status === "draft").length;
-  const missing   = employeeRows.filter((e) => e.status === "missing").length;
-  const rejected  = employeeRows.filter((e) => e.status === "rejected").length;
+  // For PD: count only employees who appear in their projects
+  const pdEmpIds = pdProjectIds
+    ? new Set(
+        timesheets
+          .filter((ts) => ts.entries.some((e) => pdProjectIds!.has(e.project.id)))
+          .map((ts) => ts.employeeId)
+      )
+    : null;
+
+  const countRows = pdEmpIds
+    ? employeeRows.filter((e) => pdEmpIds.has(e.id))
+    : employeeRows;
+
+  const submitted = countRows.filter((e) => e.status === "submitted").length;
+  const draft     = countRows.filter((e) => e.status === "draft").length;
+  const missing   = countRows.filter((e) => e.status === "missing").length;
+  const rejected  = countRows.filter((e) => e.status === "rejected").length;
 
   // ── Project-view grouping ──────────────────────────────────────────────────
   let projectRows: any[] = [];

@@ -317,18 +317,22 @@ export default function AdminPage() {
                       <td className="text-center">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
                           {isPD && emp.status === "submitted" && emp.timesheetId && (
-                            <>
-                              <button onClick={() => act(emp.timesheetId!, "approve")}
-                                disabled={acting.has(emp.timesheetId!)}
-                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
-                                ✓ อนุมัติ
-                              </button>
-                              <button onClick={() => act(emp.timesheetId!, "reject")}
-                                disabled={acting.has(emp.timesheetId!)}
-                                className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
-                                ✗ ไม่อนุมัติ
-                              </button>
-                            </>
+                            emp.totalHrs > 0 ? (
+                              <>
+                                <button onClick={() => act(emp.timesheetId!, "approve")}
+                                  disabled={acting.has(emp.timesheetId!)}
+                                  className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
+                                  ✓ อนุมัติ
+                                </button>
+                                <button onClick={() => act(emp.timesheetId!, "reject")}
+                                  disabled={acting.has(emp.timesheetId!)}
+                                  className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
+                                  ✗ ไม่อนุมัติ
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic">ชั่วโมง = 0</span>
+                            )
                           )}
                           {["submitted","approved","rejected"].includes(emp.status) && emp.timesheetId && (
                             <button onClick={() => act(emp.timesheetId!, "unlock")}
@@ -471,18 +475,22 @@ export default function AdminPage() {
                         <td className="text-center">
                           <div className="flex items-center justify-center gap-2">
                             {isPD && emp.status === "submitted" && (
-                              <>
-                                <button onClick={() => act(emp.timesheetId, "approve")}
-                                  disabled={acting.has(emp.timesheetId)}
-                                  className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
-                                  ✓
-                                </button>
-                                <button onClick={() => act(emp.timesheetId, "reject")}
-                                  disabled={acting.has(emp.timesheetId)}
-                                  className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
-                                  ✗
-                                </button>
-                              </>
+                              emp.totalHrs > 0 ? (
+                                <>
+                                  <button onClick={() => act(emp.timesheetId, "approve")}
+                                    disabled={acting.has(emp.timesheetId)}
+                                    className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
+                                    ✓
+                                  </button>
+                                  <button onClick={() => act(emp.timesheetId, "reject")}
+                                    disabled={acting.has(emp.timesheetId)}
+                                    className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
+                                    ✗
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-xs text-gray-400">0h</span>
+                              )
                             )}
                             {isAdmin && (
                               <Link href={`/admin/edit?empId=${emp.id}&week=${format(currentWeek, "yyyy-MM-dd")}`}
