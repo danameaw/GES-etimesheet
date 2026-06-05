@@ -62,8 +62,28 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     data: { isActive: false },
   });
 
+  // ── Cascade: ลบ Plan data ทั้งหมดของพนักงานที่ deactivate ─────────────────
+  await prisma.resourcePlanEmployeeMonthly.deleteMany({
+    where: { employeeId: params.id },
+  });
+
+  // ── Cascade: Reset planStatus ของ project ที่ไม่มี employee plan เหลือ ────
+  const affectedProjectIds = await prisma.resourcePlanMonthly.findMany({
+    select: { projectId: true }, distinct: ["projectId"],
+  });
+  for (const { projectId } of affectedProjectIds) {
+    const remaining = await prisma.resourcePlanEmployeeMonthly.count({ where: { projectId } });
+    if (remaining === 0) {
+      await prisma.project.updateMany({
+        where: { id: projectId, planStatus: { not: "draft" } },
+        data: { planStatus: "draft" },
+      });
+      await prisma.resourcePlanMonthly.deleteMany({ where: { projectId } });
+    }
+  }
+
   await prisma.auditLog.create({
-    data: { employeeId: (session.user as any).id, action: "DEACTIVATE_EMPLOYEE", detail: `Deactivated ${employee.employeeId}` },
+    data: { employeeId: (session.user as any).id, action: "DEACTIVATE_EMPLOYEE", detail: `Deactivated ${employee.employeeId} + cleared plan data` },
   });
 
   return NextResponse.json({ success: true });
