@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { useRef } from "react";
 import { OH_CATEGORIES } from "@/lib/task-constants";
 
 // ──────────── Types ────────────
@@ -239,7 +240,8 @@ function ProjectsTab() {
 // TASKS TAB — template data
 // ══════════════════════════════════════════════════════════════════════════
 
-const PROJECT_TASKS_TEMPLATE = [
+// Template data removed — ใช้ Import Excel แทน
+const _PROJECT_TASKS_TEMPLATE_UNUSED = [
   { code: "0011", name: "Project Administration - General",                    category: "Project Management & Administration" },
   { code: "0012", name: "BOI",                                                  category: "Project Management & Administration" },
   { code: "0013", name: "Project Director",                                     category: "Project Management & Administration" },
@@ -291,7 +293,7 @@ const PROJECT_TASKS_TEMPLATE = [
   { code: "1713", name: "Commissioning Manager",                                category: "Construction" },
 ];
 
-const OH_TASKS_TEMPLATE = [
+const _OH_TASKS_TEMPLATE_UNUSED = [
   { code: "1001", name: "Holidays",                                             category: "Holiday" },
   { code: "1002", name: "Annual Leave",                                         category: "Holiday" },
   { code: "1003", name: "Personal Leave",                                       category: "Holiday" },
@@ -331,7 +333,9 @@ function TasksTab() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [taskType, setTaskType] = useState<"project" | "oh">("project");
-  const [seeding, setSeeding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const emptyForm = { code: "", name: "", category: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -350,21 +354,26 @@ function TasksTab() {
   const displayTasks = tasks.filter((t) => taskType === "oh" ? isOH(t) : !isOH(t));
 
   const categories = Array.from(new Set(displayTasks.map((t) => t.category))).sort();
-  const templateCategories = taskType === "project"
-    ? Array.from(new Set(PROJECT_TASKS_TEMPLATE.map((t) => t.category)))
-    : Array.from(new Set(OH_TASKS_TEMPLATE.map((t) => t.category)));
+  // ใช้ categories จาก tasks ที่มีอยู่ใน DB เป็น dropdown options
+  const templateCategories = categories;
 
-  const handleLoadTemplate = async () => {
-    const template = taskType === "project" ? PROJECT_TASKS_TEMPLATE : OH_TASKS_TEMPLATE;
-    if (!confirm(`โหลด ${template.length} รหัสงานจาก template? (รายการที่มีอยู่แล้วจะถูกอัพเดตชื่อและหมวดหมู่)`)) return;
-    setSeeding(true);
-    await fetch("/api/manage/tasks", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tasks: template }),
-    });
-    setSeeding(false);
-    load();
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportMsg(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/manage/tasks/import", { method: "POST", body: fd });
+    const data = await res.json();
+    setImporting(false);
+    if (importRef.current) importRef.current.value = "";
+    if (res.ok) {
+      setImportMsg({ type: "success", text: `นำเข้าสำเร็จ ${data.upserted} รหัสงาน` });
+      load();
+    } else {
+      setImportMsg({ type: "error", text: data.error || "เกิดข้อผิดพลาด" });
+    }
   };
 
   const startEdit = (t: TaskCode) => {
@@ -414,6 +423,13 @@ function TasksTab() {
         </div>
       )}
 
+      {importMsg && (
+        <div className={`px-4 py-2.5 rounded-lg text-sm flex items-center justify-between ${importMsg.type === "success" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+          <span>{importMsg.type === "success" ? "✓" : "✗"} {importMsg.text}</span>
+          <button onClick={() => setImportMsg(null)} className="text-lg leading-none ml-4 opacity-50 hover:opacity-100">×</button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3 items-center justify-between">
         <input className="ges-input max-w-xs" placeholder="ค้นหา code, ชื่อ, หมวดหมู่…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="flex gap-2 items-center flex-wrap">
@@ -421,9 +437,11 @@ function TasksTab() {
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
             แสดงที่ปิดแล้ว
           </label>
-          <button onClick={handleLoadTemplate} disabled={seeding}
+          {/* Import Excel */}
+          <input ref={importRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
+          <button onClick={() => importRef.current?.click()} disabled={importing}
             className="ges-btn-secondary text-sm">
-            {seeding ? "⏳ Loading…" : "🔄 Load from Template"}
+            {importing ? "⏳ Importing…" : "📥 Import Excel"}
           </button>
           <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); }} className="ges-btn-primary text-sm">+ เพิ่มรหัสงาน</button>
         </div>
@@ -503,8 +521,8 @@ function TasksTab() {
           {filtered.length === 0 && (
             <div className="ges-card p-10 text-center text-gray-400">
               <p>ยังไม่มีรหัสงาน</p>
-              <button onClick={handleLoadTemplate} disabled={seeding} className="ges-btn-primary text-sm mt-3">
-                🔄 Load from Template
+              <button onClick={() => importRef.current?.click()} disabled={importing} className="ges-btn-primary text-sm mt-3">
+                📥 Import Excel
               </button>
             </div>
           )}
