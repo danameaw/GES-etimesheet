@@ -2,13 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { format, addWeeks, subWeeks, startOfWeek } from "date-fns";
-
-// OH categories — ต้องใช้ Project GES-OH เท่านั้น
-const OH_CATEGORIES = new Set([
-  "Holiday", "Training", "Meetings", "Traveling",
-  "Business Development", "Lessons Learned & Process Improvement",
-  "Department/Corporate Work", "Unassigned",
-]);
+import { OH_CATEGORIES } from "@/lib/task-constants";
 
 interface Project {
   id: string;

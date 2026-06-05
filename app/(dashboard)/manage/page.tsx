@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { OH_CATEGORIES } from "@/lib/task-constants";
 
 // ──────────── Types ────────────
 interface Project {
@@ -318,12 +319,6 @@ const OH_TASKS_TEMPLATE = [
   { code: "8106", name: "Interview",                                            category: "Department/Corporate Work" },
   { code: "9001", name: "Unassigned / Waiting for Assignment",                  category: "Unassigned" },
 ];
-
-export const OH_CATEGORIES = new Set([
-  "Holiday", "Training", "Meetings", "Traveling",
-  "Business Development", "Lessons Learned & Process Improvement",
-  "Department/Corporate Work", "Unassigned",
-]);
 
 // ══════════════════════════════════════════════════════════════════════════
 // TASKS TAB
