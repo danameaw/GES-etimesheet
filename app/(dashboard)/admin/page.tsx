@@ -289,7 +289,7 @@ export default function AdminPage() {
                   className="w-full flex items-center justify-between px-5 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
                   onClick={() => setExpandedWeeks((prev) => {
                     const n = new Set(prev);
-                    isOpen ? n.delete(wkKey) : n.add(wkKey);
+                    if (isOpen) { n.delete(wkKey); } else { n.add(wkKey); }
                     return n;
                   })}>
                   <div className="flex items-center gap-3">
