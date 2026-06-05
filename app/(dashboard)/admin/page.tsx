@@ -66,7 +66,7 @@ export default function AdminPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function act(timesheetId: string, action: "approve" | "unlock") {
+  async function act(timesheetId: string, action: "approve" | "reject" | "unlock") {
     setActing((s) => new Set(s).add(timesheetId));
     await fetch(`/api/timesheets/${timesheetId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
