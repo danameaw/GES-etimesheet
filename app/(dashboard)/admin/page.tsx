@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { format, startOfWeek, addWeeks, subWeeks, addDays } from "date-fns";
+import { format, startOfWeek, addWeeks, subWeeks, addDays, addMonths, subMonths, startOfMonth, endOfMonth } from "date-fns";
 
 interface EmployeeRow {
   id: string; employeeId: string; name: string; department: string; position: string;
@@ -24,11 +24,15 @@ interface Summary {
 export default function AdminPage() {
   const { data: session } = useSession();
   const router = useRouter();
+  const [navMode, setNavMode] = useState<"week" | "month">("week");
   const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
   const [summary, setSummary] = useState<Summary | null>(null);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [monthWeeks, setMonthWeeks] = useState<{ week: Date; label: string; projectRows: ProjectRow[]; employees: EmployeeRow[]; summary: Summary | null }[]>([]);
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all"|"submitted"|"approved"|"rejected"|"draft"|"missing">("all");
   const [search, setSearch] = useState("");
   const [acting, setActing] = useState<Set<string>>(new Set());
@@ -47,22 +51,59 @@ export default function AdminPage() {
     if (session && !canApprove) router.push("/timesheet");
   }, [session, canApprove, router]);
 
+  // helper: get all Mon-starting weeks that overlap with a month
+  function getWeeksInMonth(month: Date): Date[] {
+    const mEnd = endOfMonth(month);
+    let w = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
+    const weeks: Date[] = [];
+    while (w <= mEnd) { weeks.push(w); w = addWeeks(w, 1); }
+    return weeks;
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     setSelectedIds(new Set());
     setSelectedProjIds(new Set());
-    const weekStr = format(currentWeek, "yyyy-MM-dd");
-    const [empRes, projRes] = await Promise.all([
-      fetch(`/api/admin?week=${weekStr}`),
-      fetch(`/api/admin?week=${weekStr}&view=project`),
-    ]);
-    const empData  = await empRes.json();
-    const projData = await projRes.json();
-    setSummary(empData.summary);
-    setEmployees(empData.employees || []);
-    setProjectRows(projData.projectRows || []);
+
+    if (navMode === "week") {
+      const weekStr = format(currentWeek, "yyyy-MM-dd");
+      const [empRes, projRes] = await Promise.all([
+        fetch(`/api/admin?week=${weekStr}`),
+        fetch(`/api/admin?week=${weekStr}&view=project`),
+      ]);
+      const empData  = await empRes.json();
+      const projData = await projRes.json();
+      setSummary(empData.summary);
+      setEmployees(empData.employees || []);
+      setProjectRows(projData.projectRows || []);
+    } else {
+      // Month mode — fetch all weeks in parallel
+      const weeks = getWeeksInMonth(currentMonth);
+      const results = await Promise.all(
+        weeks.map(async (w) => {
+          const wStr = format(w, "yyyy-MM-dd");
+          const [eRes, pRes] = await Promise.all([
+            fetch(`/api/admin?week=${wStr}`),
+            fetch(`/api/admin?week=${wStr}&view=project`),
+          ]);
+          const eData = await eRes.json();
+          const pData = await pRes.json();
+          return {
+            week: w,
+            label: `${format(w, "dd MMM")} – ${format(addDays(w, 6), "dd MMM")}`,
+            projectRows: pData.projectRows || [],
+            employees: eData.employees || [],
+            summary: eData.summary || null,
+          };
+        })
+      );
+      setMonthWeeks(results);
+      // auto-expand all weeks
+      setExpandedWeeks(new Set(results.map((r) => format(r.week, "yyyy-MM-dd"))));
+    }
     setLoading(false);
-  }, [currentWeek]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navMode, currentWeek, currentMonth]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -159,14 +200,40 @@ export default function AdminPage() {
             {isPD ? "อนุมัติ Timesheet ประจำสัปดาห์" : "Timesheet submission overview"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setCurrentWeek((w) => subWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
-          <div className="text-center min-w-[200px]">
-            <p className="font-semibold text-sm">{format(currentWeek, "dd MMM")} – {format(weekEnd, "dd MMM yyyy")}</p>
-            <p className="text-xs text-gray-400">สัปดาห์ที่ {format(currentWeek, "w, yyyy")}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Toggle week/month */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+            <button onClick={() => setNavMode("week")}
+              className={`px-3 py-1.5 transition-colors ${navMode === "week" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              สัปดาห์
+            </button>
+            <button onClick={() => setNavMode("month")}
+              className={`px-3 py-1.5 transition-colors ${navMode === "month" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              เดือน
+            </button>
           </div>
-          <button onClick={() => setCurrentWeek((w) => addWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
-          <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">วันนี้</button>
+
+          {navMode === "week" ? (
+            <>
+              <button onClick={() => setCurrentWeek((w) => subWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
+              <div className="text-center min-w-[200px]">
+                <p className="font-semibold text-sm">{format(currentWeek, "dd MMM")} – {format(weekEnd, "dd MMM yyyy")}</p>
+                <p className="text-xs text-gray-400">สัปดาห์ที่ {format(currentWeek, "w, yyyy")}</p>
+              </div>
+              <button onClick={() => setCurrentWeek((w) => addWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
+              <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">วันนี้</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setCurrentMonth((m) => subMonths(m, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
+              <div className="text-center min-w-[160px]">
+                <p className="font-semibold text-sm">{format(currentMonth, "MMMM yyyy")}</p>
+                <p className="text-xs text-gray-400">{getWeeksInMonth(currentMonth).length} สัปดาห์</p>
+              </div>
+              <button onClick={() => setCurrentMonth((m) => addMonths(m, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
+              <button onClick={() => setCurrentMonth(startOfMonth(new Date()))} className="text-xs text-blue-600 hover:underline ml-1">เดือนนี้</button>
+            </>
+          )}
           <button onClick={load} title="Refresh" className="text-xs text-gray-500 hover:text-blue-600 ml-1">🔄</button>
         </div>
       </div>
@@ -201,7 +268,117 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Toolbar */}
+      {/* ── MONTH VIEW ── */}
+      {navMode === "month" && (
+        <div className="space-y-3 mb-4">
+          {loading ? (
+            <div className="ges-card p-10 text-center text-gray-400">กำลังโหลดข้อมูลทุกสัปดาห์…</div>
+          ) : monthWeeks.length === 0 ? (
+            <div className="ges-card p-10 text-center text-gray-400">ไม่มีข้อมูล</div>
+          ) : monthWeeks.map((wk) => {
+            const wkKey = format(wk.week, "yyyy-MM-dd");
+            const isOpen = expandedWeeks.has(wkKey);
+            const s = wk.summary;
+            const submitted = s?.submitted ?? 0;
+            const approved  = wk.employees.filter((e) => e.status === "approved").length;
+            const total     = s?.total ?? 0;
+            return (
+              <div key={wkKey} className="ges-card overflow-hidden">
+                {/* Week header row */}
+                <button
+                  className="w-full flex items-center justify-between px-5 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                  onClick={() => setExpandedWeeks((prev) => {
+                    const n = new Set(prev);
+                    isOpen ? n.delete(wkKey) : n.add(wkKey);
+                    return n;
+                  })}>
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-sm text-gray-800">{wk.label}</span>
+                    <span className="text-xs text-gray-400">สัปดาห์ที่ {format(wk.week, "w")}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    {total > 0 && (
+                      <>
+                        <span className="text-amber-600 font-medium">{submitted} รออนุมัติ</span>
+                        <span className="text-green-600 font-medium">{approved} อนุมัติแล้ว</span>
+                        <span className="text-gray-400">{total} คน</span>
+                      </>
+                    )}
+                    <span className="text-gray-400 ml-1">{isOpen ? "▲" : "▼"}</span>
+                  </div>
+                </button>
+
+                {/* Week content */}
+                {isOpen && (
+                  <div className="overflow-x-auto">
+                    {wk.projectRows.length === 0 ? (
+                      <p className="px-5 py-4 text-sm text-gray-400">ไม่มีข้อมูล Timesheet สำหรับสัปดาห์นี้</p>
+                    ) : wk.projectRows.map((proj) => (
+                      <div key={proj.projectId} className="border-t border-gray-100">
+                        <div className="px-5 py-2 bg-blue-50 flex items-center gap-2">
+                          <span className="text-xs font-mono text-blue-600">{proj.projectNumber}</span>
+                          <span className="text-sm font-semibold text-blue-900">{proj.projectName}</span>
+                          <span className="ml-auto text-xs text-gray-400">{proj.employees.length} คน</span>
+                        </div>
+                        <table className="w-full text-sm">
+                          <tbody>
+                            {proj.employees.map((emp) => {
+                              const statusMap: Record<string, string> = {
+                                submitted: "bg-amber-100 text-amber-800",
+                                approved:  "bg-green-100 text-green-800",
+                                rejected:  "bg-red-100 text-red-800",
+                                draft:     "bg-gray-100 text-gray-600",
+                              };
+                              const isBusy = acting.has(emp.timesheetId);
+                              return (
+                                <tr key={emp.id} className="border-t border-gray-50 hover:bg-gray-50">
+                                  <td className="px-5 py-2">
+                                    <span className="font-medium">{emp.name}</span>
+                                    <span className="text-xs text-gray-400 ml-2">{emp.employeeId}</span>
+                                  </td>
+                                  <td className="px-3 py-2 text-xs text-gray-500">{emp.department}</td>
+                                  <td className="px-3 py-2 text-right text-xs text-blue-700 font-medium">{emp.projectHrs}h</td>
+                                  <td className="px-3 py-2">
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusMap[emp.status] ?? "bg-gray-100 text-gray-500"}`}>
+                                      {emp.status === "submitted" ? "รออนุมัติ" : emp.status === "approved" ? "✓ อนุมัติแล้ว" : emp.status === "rejected" ? "✗ ไม่อนุมัติ" : emp.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    {canApprove && emp.status === "submitted" && (
+                                      <div className="flex gap-1 justify-end">
+                                        <button onClick={() => act(emp.timesheetId, "approve")} disabled={isBusy}
+                                          className="text-xs bg-green-600 text-white px-2 py-0.5 rounded hover:bg-green-700 disabled:opacity-50">
+                                          {isBusy ? "…" : "✓"}
+                                        </button>
+                                        <button onClick={() => act(emp.timesheetId, "reject")} disabled={isBusy}
+                                          className="text-xs bg-red-500 text-white px-2 py-0.5 rounded hover:bg-red-600 disabled:opacity-50">
+                                          ✗
+                                        </button>
+                                      </div>
+                                    )}
+                                    {canApprove && emp.status === "approved" && (
+                                      <button onClick={() => act(emp.timesheetId, "unlock")} disabled={isBusy}
+                                        className="text-xs text-gray-400 hover:text-orange-600 disabled:opacity-50">🔓</button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── WEEK VIEW ── */}
+      {navMode === "week" && (
+      <>{/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4 flex-wrap">
         <input type="text" placeholder="ค้นหาชื่อ, รหัส, แผนก…" value={search}
           onChange={(e) => setSearch(e.target.value)} className="ges-input max-w-sm" />
@@ -511,6 +688,8 @@ export default function AdminPage() {
       <p className="text-xs text-gray-400 mt-3 text-right">
         {view === "employee" ? `แสดง ${filtered.length} จาก ${employees.length} คน` : `${projectRows.length} โครงการ`}
       </p>
+      </>
+      )}
     </div>
   );
 }
