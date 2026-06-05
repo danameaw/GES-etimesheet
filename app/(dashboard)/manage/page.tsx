@@ -4,7 +4,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { useRef } from "react";
-import { OH_CATEGORIES } from "@/lib/task-constants";
+import { OH_CATEGORIES, TASK_CATEGORIES } from "@/lib/task-constants";
 
 // ──────────── Types ────────────
 interface Project {
@@ -268,7 +268,6 @@ function TasksTab() {
   useEffect(() => { load(); }, [load]);
 
   const categories = Array.from(new Set(tasks.map((t) => t.category))).sort();
-  const templateCategories = categories;
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -339,7 +338,10 @@ function TasksTab() {
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
             แสดงที่ปิดแล้ว
           </label>
-          {/* Import Excel */}
+          {/* Download template + Import Excel */}
+          <a href="/api/manage/tasks/template" className="ges-btn-secondary text-sm">
+            📄 ดาวน์โหลด Template
+          </a>
           <input ref={importRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
           <button onClick={() => importRef.current?.click()} disabled={importing}
             className="ges-btn-secondary text-sm">
@@ -368,10 +370,7 @@ function TasksTab() {
               <label className="block text-xs text-gray-500 mb-1">หมวดหมู่ (หัวข้อหลัก) *</label>
               <select className="ges-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 <option value="">-- เลือกหมวดหมู่ --</option>
-                {templateCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-                {form.category && !templateCategories.includes(form.category) && (
-                  <option value={form.category}>{form.category} (custom)</option>
-                )}
+                {TASK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           </div>
