@@ -30,13 +30,20 @@ export async function GET(req: NextRequest) {
   let pdProjectIds: Set<string> | null = null;
   if (role === "pd") {
     const pdProjects = await prisma.project.findMany({
-      where: {
-        isActive: true,
-        OR: [{ pdId: empDbId }, { managerId: empDbId }],
-      },
+      where: { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] },
       select: { id: true },
     });
     pdProjectIds = new Set(pdProjects.map((p) => p.id));
+  }
+
+  // ── For MD: เห็นเฉพาะโครงการ GES-OH (projectType = "support") ─────────────
+  let mdProjectIds: Set<string> | null = null;
+  if (role === "md") {
+    const ohProjects = await prisma.project.findMany({
+      where: { isActive: true, OR: [{ projectType: "support" }, { projectNumber: { startsWith: "GES-OH" } }] },
+      select: { id: true },
+    });
+    mdProjectIds = new Set(ohProjects.map((p) => p.id));
   }
 
   const [allEmployees, timesheets] = await Promise.all([
@@ -70,17 +77,19 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // For PD: count only employees who appear in their projects
-  const pdEmpIds = pdProjectIds
+  // กรอง project IDs ตาม role
+  const scopedProjectIds = pdProjectIds ?? mdProjectIds ?? null;
+
+  const scopedEmpIds = scopedProjectIds
     ? new Set(
         timesheets
-          .filter((ts) => ts.entries.some((e) => pdProjectIds!.has(e.project.id)))
+          .filter((ts) => ts.entries.some((e) => scopedProjectIds.has(e.project.id)))
           .map((ts) => ts.employeeId)
       )
     : null;
 
-  const countRows = pdEmpIds
-    ? employeeRows.filter((e) => pdEmpIds.has(e.id))
+  const countRows = scopedEmpIds
+    ? employeeRows.filter((e) => scopedEmpIds.has(e.id))
     : employeeRows;
 
   const submitted = countRows.filter((e) => e.status === "submitted").length;
@@ -113,8 +122,8 @@ export async function GET(req: NextRequest) {
       for (const entry of ts.entries) {
         if (entry.totalHrs === 0) continue;
         const p = entry.project;
-        // PD: only their own projects
-        if (pdProjectIds && !pdProjectIds.has(p.id)) continue;
+        // กรองตาม scope (PD = projects ของตัวเอง, MD = GES-OH)
+        if (scopedProjectIds && !scopedProjectIds.has(p.id)) continue;
 
         if (!projMap.has(p.id)) {
           projMap.set(p.id, { projectId: p.id, projectNumber: p.projectNumber, projectName: p.projectName, employees: [] });
@@ -143,11 +152,11 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.projectNumber.localeCompare(b.projectNumber));
   }
 
-  // For PD summary: count only employees in their projects
-  const summaryEmployees = pdProjectIds
+  // Summary: count only employees in scoped projects
+  const summaryEmployees = scopedProjectIds
     ? allEmployees.filter((e) => {
         const ts = timesheetMap.get(e.id);
-        return ts?.entries.some((en) => pdProjectIds!.has(en.project.id));
+        return ts?.entries.some((en) => scopedProjectIds!.has(en.project.id));
       })
     : allEmployees;
 
