@@ -45,7 +45,8 @@ export default function AdminPage() {
   const isAdmin = role === "admin";
   const isMD    = role === "md";
   const isPD    = role === "pd";   // Project Director — อนุมัติ Timesheet
-  const canApprove = isPD || isAdmin || isMD;
+  const canApprove    = isPD || isAdmin || isMD;  // เข้าหน้า approval ได้
+  const canActApprove = isPD || isMD;             // อนุมัติ/reject ได้ (Admin ทำได้แค่ unlock)
 
   useEffect(() => {
     if (session && !canApprove) router.push("/timesheet");
@@ -344,7 +345,7 @@ export default function AdminPage() {
                                     </span>
                                   </td>
                                   <td className="px-3 py-2 text-right">
-                                    {canApprove && emp.status === "submitted" && (
+                                    {canActApprove && emp.status === "submitted" && (
                                       <div className="flex gap-1 justify-end">
                                         <button onClick={() => act(emp.timesheetId, "approve")} disabled={isBusy}
                                           className="text-xs bg-green-600 text-white px-2 py-0.5 rounded hover:bg-green-700 disabled:opacity-50">
@@ -493,7 +494,7 @@ export default function AdminPage() {
                       </td>
                       <td className="text-center">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
-                          {isPD && emp.status === "submitted" && emp.timesheetId && (
+                          {canActApprove && emp.status === "submitted" && emp.timesheetId && (
                             <>
                               <button onClick={() => act(emp.timesheetId!, "approve")}
                                 disabled={acting.has(emp.timesheetId!)}
@@ -590,7 +591,7 @@ export default function AdminPage() {
                       <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full">รออนุมัติ {submittedEmps.length}</span>
                     )}
                     {/* Approve this project's submitted employees */}
-                    {isPD && submittedEmps.length > 0 && (
+                    {canActApprove && submittedEmps.length > 0 && (
                       <button
                         onClick={async () => {
                           setBulkLoading(true);
@@ -647,7 +648,7 @@ export default function AdminPage() {
                         <td className="text-center"><StatusBadge status={emp.status} /></td>
                         <td className="text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {canApprove && emp.status === "submitted" && (
+                            {canActApprove && emp.status === "submitted" && (
                               <>
                                 <button onClick={() => act(emp.timesheetId, "approve")}
                                   disabled={acting.has(emp.timesheetId)}

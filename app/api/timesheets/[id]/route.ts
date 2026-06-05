@@ -40,16 +40,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   if (action === "approve") {
-    if (role !== "pd" && role !== "md" && role !== "admin")
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // เฉพาะ PD และ MD เท่านั้น — Admin ดูได้แต่อนุมัติไม่ได้
+    if (role !== "pd" && role !== "md")
+      return NextResponse.json({ error: "เฉพาะ PD/MD เท่านั้นที่อนุมัติได้" }, { status: 403 });
     await prisma.timesheet.update({ where: { id: params.id }, data: { status: "approved" } });
     await prisma.auditLog.create({ data: { employeeId: (session.user as any).id, action: "APPROVE_TIMESHEET", detail: `Approved timesheet ${params.id}` } });
     return NextResponse.json({ success: true });
   }
 
   if (action === "reject") {
-    if (role !== "pd" && role !== "md" && role !== "admin")
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // เฉพาะ PD และ MD เท่านั้น
+    if (role !== "pd" && role !== "md")
+      return NextResponse.json({ error: "เฉพาะ PD/MD เท่านั้นที่ reject ได้" }, { status: 403 });
     await prisma.timesheet.update({
       where: { id: params.id },
       data: { status: "rejected", submittedAt: null },
