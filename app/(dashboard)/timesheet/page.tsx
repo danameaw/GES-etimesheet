@@ -64,7 +64,7 @@ export default function TimesheetPage() {
   const [taskCodes, setTaskCodes]     = useState<TaskCode[]>([]);
   const [holidays, setHolidays]       = useState<Holiday[]>([]);
   const [rows, setRows]               = useState<TimesheetRow[]>([newRow()]);
-  const [timesheetStatus, setTimesheetStatus] = useState<string>("draft");
+  const [timesheetStatus, setTimesheetStatus] = useState<string>("missing");
   const [saving, setSaving]           = useState(false);
   const [message, setMessage]         = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
 
@@ -127,7 +127,7 @@ export default function TimesheetPage() {
         setRows([newRow()]);
       }
     } else {
-      setTimesheetStatus("draft");
+      setTimesheetStatus("missing");
       setRows([newRow()]);
     }
   }, [currentWeek]);
@@ -224,9 +224,10 @@ export default function TimesheetPage() {
           <span className={`text-sm font-medium px-3 py-1 rounded-full ${
             isApproved ? "bg-blue-100 text-blue-800" :
             isSubmitted ? "bg-green-100 text-green-800" :
-            "bg-yellow-100 text-yellow-800"
+            timesheetStatus === "draft" ? "bg-yellow-100 text-yellow-800" :
+            "bg-gray-100 text-gray-500"
           }`}>
-            {isApproved ? "✓ Approved" : isSubmitted ? "✓ Submitted" : "Draft"}
+            {isApproved ? "✓ Approved" : isSubmitted ? "✓ Submitted" : timesheetStatus === "draft" ? "Draft" : "ยังไม่กรอก"}
           </span>
         </div>
       </div>

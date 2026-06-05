@@ -111,6 +111,7 @@ export async function GET(req: NextRequest) {
     for (const ts of timesheets) {
       const tsTotalHrs = ts.entries.reduce((s, e) => s + e.totalHrs, 0);
       for (const entry of ts.entries) {
+        if (entry.totalHrs === 0) continue;
         const p = entry.project;
         // PD: only their own projects
         if (pdProjectIds && !pdProjectIds.has(p.id)) continue;
