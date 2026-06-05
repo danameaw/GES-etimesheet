@@ -14,17 +14,34 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { action } = await req.json();
 
-  // ── MD: ตรวจว่า timesheet มี entry ใน GES-OH project เท่านั้น ────────────
-  if (role === "md" && ["approve", "reject", "unlock"].includes(action)) {
+  // ── ตรวจสิทธิ์ตาม role ก่อน approve/reject/unlock ─────────────────────────
+  if (["approve", "reject", "unlock"].includes(action) && role !== "admin") {
     const ts = await prisma.timesheet.findUnique({
       where: { id: params.id },
-      include: { entries: { include: { project: { select: { projectType: true, projectNumber: true } } } } },
+      include: { entries: { include: { project: { select: { id: true, projectType: true, projectNumber: true, pdId: true, managerId: true } } } } },
     });
-    const isOH = ts?.entries.every(
-      (e) => e.project.projectType === "support" || e.project.projectNumber.startsWith("GES-OH")
-    );
-    if (!isOH) {
-      return NextResponse.json({ error: "MD สามารถอนุมัติได้เฉพาะ GES-OH เท่านั้น" }, { status: 403 });
+    if (!ts) return NextResponse.json({ error: "Timesheet not found" }, { status: 404 });
+
+    const empDbId = (session.user as any).id;
+
+    if (role === "pd") {
+      // PD: ต้องมี entry ที่อยู่ใน project ของตัวเอง (pdId หรือ managerId)
+      const ownsAny = ts.entries.some(
+        (e) => e.project.pdId === empDbId || e.project.managerId === empDbId
+      );
+      if (!ownsAny) {
+        return NextResponse.json({ error: "PD สามารถอนุมัติได้เฉพาะ project ของตัวเองเท่านั้น" }, { status: 403 });
+      }
+    }
+
+    if (role === "md") {
+      // MD: ต้องเป็น GES-OH เท่านั้น
+      const isOH = ts.entries.every(
+        (e) => e.project.projectType === "support" || e.project.projectNumber.startsWith("GES-OH")
+      );
+      if (!isOH) {
+        return NextResponse.json({ error: "MD สามารถอนุมัติได้เฉพาะ GES-OH เท่านั้น" }, { status: 403 });
+      }
     }
   }
 
