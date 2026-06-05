@@ -421,6 +421,15 @@ function MatrixTable({ rows, matrixMonths }: {
   matrixMonths: { year: number; month: number; label: string }[];
 }) {
   if (!rows.length) return <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan</div>;
+
+  // แสดงเฉพาะเดือนที่มี plan > 0 อย่างน้อย 1 โปรเจกต์
+  const visibleMonths = matrixMonths.filter((mm) =>
+    rows.some((row) => {
+      const m = row.months.find((x) => x.year === mm.year && x.month === mm.month);
+      return (m?.planned ?? 0) > 0;
+    })
+  );
+
   return (
     <table className="text-xs w-full">
       <thead>
@@ -428,7 +437,7 @@ function MatrixTable({ rows, matrixMonths }: {
           <th className="text-left px-4 py-2.5 font-semibold text-gray-700 min-w-[160px] sticky left-0 bg-gray-50 border-r border-gray-200 z-10">
             {rows[0]?.isProject ? "โปรเจกต์" : "พนักงาน"}
           </th>
-          {matrixMonths.map((m) => (
+          {visibleMonths.map((m) => (
             <th key={`${m.year}-${m.month}`} className="px-2 py-2.5 text-center min-w-[90px] font-medium text-gray-600">{m.label}</th>
           ))}
           <th className="px-3 py-2.5 text-center min-w-[80px] font-semibold text-gray-700 border-l border-gray-200">Total Plan</th>
@@ -451,7 +460,7 @@ function MatrixTable({ rows, matrixMonths }: {
                     <p className="text-gray-400">{row.label2}</p></>
                 )}
               </td>
-              {matrixMonths.map((mm) => {
+              {visibleMonths.map((mm) => {
                 const m = row.months.find((x) => x.year === mm.year && x.month === mm.month) ?? { planned: 0, actual: 0 };
                 const hasData = m.planned > 0 || m.actual > 0;
                 const over    = m.planned > 0 && m.actual > m.planned;

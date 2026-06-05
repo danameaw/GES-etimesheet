@@ -33,6 +33,7 @@ export default function Navbar() {
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
     { href: "/resource-plan",           label: "Resource Plan",  icon: "📌", show: isPD },
     { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
+    { href: "/admin",                    label: "Approval",       icon: "✅", show: isMD },
     { href: "/admin/resource-approval", label: "Plan/Actual",    icon: "📊", show: isMD },
     { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt },
     { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD },
