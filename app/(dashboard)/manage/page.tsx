@@ -240,87 +240,6 @@ function ProjectsTab() {
 // TASKS TAB — template data
 // ══════════════════════════════════════════════════════════════════════════
 
-// Template data removed — ใช้ Import Excel แทน
-const _PROJECT_TASKS_TEMPLATE_UNUSED = [
-  { code: "0011", name: "Project Administration - General",                    category: "Project Management & Administration" },
-  { code: "0012", name: "BOI",                                                  category: "Project Management & Administration" },
-  { code: "0013", name: "Project Director",                                     category: "Project Management & Administration" },
-  { code: "0014", name: "Project Manager",                                      category: "Project Management & Administration" },
-  { code: "0015", name: "Engineering Manager",                                  category: "Project Management & Administration" },
-  { code: "0016", name: "Construction Manager",                                 category: "Project Management & Administration" },
-  { code: "0017", name: "Commissioning Manager",                                category: "Project Management & Administration" },
-  { code: "0110", name: "Civil Engineering Administration",                     category: "Civil Engineering" },
-  { code: "0130", name: "Civil Engineering Permiting and Licensing",            category: "Civil Engineering" },
-  { code: "0140", name: "Civil Engineering Conceptual Design",                  category: "Civil Engineering" },
-  { code: "0150", name: "Civil Engineering Detailed Design",                    category: "Civil Engineering" },
-  { code: "0161", name: "Civil Engineering - Preaward",                         category: "Civil Engineering" },
-  { code: "0162", name: "Civil Engineering - Postaward",                        category: "Civil Engineering" },
-  { code: "0163", name: "Civil Engineering - FAT",                              category: "Civil Engineering" },
-  { code: "0180", name: "Civil Engineering - Construction Support",             category: "Civil Engineering" },
-  { code: "0191", name: "Civil Engineering - As-Builts",                        category: "Civil Engineering" },
-  { code: "0210", name: "Mechanical Engineering Administration",                category: "Mechanical Engineering" },
-  { code: "0230", name: "Mechanical Engineering Permiting and Licensing",       category: "Mechanical Engineering" },
-  { code: "0240", name: "Mechanical Engineering Conceptual Design",             category: "Mechanical Engineering" },
-  { code: "0250", name: "Mechanical Engineering Detailed Design",               category: "Mechanical Engineering" },
-  { code: "0261", name: "Mechanical Engineering - Preaward",                    category: "Mechanical Engineering" },
-  { code: "0262", name: "Mechanical Engineering - Postaward",                   category: "Mechanical Engineering" },
-  { code: "0263", name: "Mechanical Engineering - FAT",                         category: "Mechanical Engineering" },
-  { code: "0280", name: "Mechanical Engineering - Construction Support",        category: "Mechanical Engineering" },
-  { code: "0291", name: "Mechanical Engineering - As-Builts",                   category: "Mechanical Engineering" },
-  { code: "0310", name: "Control/Electrical Engineering Administration",        category: "Control/Electrical Engineering" },
-  { code: "0330", name: "Control/Electrical Engineering Permiting and Licensing", category: "Control/Electrical Engineering" },
-  { code: "0340", name: "Control/Electrical Engineering Conceptual Design",     category: "Control/Electrical Engineering" },
-  { code: "0350", name: "Control/Electrical Engineering Detailed Design",       category: "Control/Electrical Engineering" },
-  { code: "0361", name: "Control/Electrical Engineering - Preaward",            category: "Control/Electrical Engineering" },
-  { code: "0362", name: "Control/Electrical Engineering - Postaward",           category: "Control/Electrical Engineering" },
-  { code: "0363", name: "Control/Electrical Engineering - FAT",                 category: "Control/Electrical Engineering" },
-  { code: "0380", name: "Control/Electrical Engineering - Construction Support", category: "Control/Electrical Engineering" },
-  { code: "0391", name: "Control/Electrical Engineering - As-Builts",           category: "Control/Electrical Engineering" },
-  { code: "0510", name: "Project Controls Administration",                      category: "Project Controls" },
-  { code: "0610", name: "Procurement Administration",                           category: "Procurement" },
-  { code: "0660", name: "Procurement - Bid List Development (Equipment)",       category: "Procurement" },
-  { code: "0661", name: "Procurement - Bidding & Evaluation (Equipment)",       category: "Procurement" },
-  { code: "0662", name: "Procurement - Contract Negotiations & Award (Equipment)", category: "Procurement" },
-  { code: "0663", name: "Procurement - Expediting (Equipment)",                 category: "Procurement" },
-  { code: "0664", name: "Procurement - Logistics (Equipment)",                  category: "Procurement" },
-  { code: "0665", name: "Procurement - Warranty Administration (Equipment)",    category: "Procurement" },
-  { code: "0666", name: "Procurement - Bid List Development (EPC)",             category: "Procurement" },
-  { code: "0667", name: "Procurement - Bidding & Evaluation (EPC)",             category: "Procurement" },
-  { code: "0668", name: "Procurement - Contract Negotiations & Award (EPC)",    category: "Procurement" },
-  { code: "1710", name: "Site Manager",                                         category: "Construction" },
-  { code: "1711", name: "Site Engineer",                                        category: "Construction" },
-  { code: "1712", name: "Safety Officer",                                       category: "Construction" },
-  { code: "1713", name: "Commissioning Manager",                                category: "Construction" },
-];
-
-const _OH_TASKS_TEMPLATE_UNUSED = [
-  { code: "1001", name: "Holidays",                                             category: "Holiday" },
-  { code: "1002", name: "Annual Leave",                                         category: "Holiday" },
-  { code: "1003", name: "Personal Leave",                                       category: "Holiday" },
-  { code: "1004", name: "Sick Leave",                                           category: "Holiday" },
-  { code: "1005", name: "Others",                                               category: "Holiday" },
-  { code: "2001", name: "Internal Training",                                    category: "Training" },
-  { code: "2002", name: "External Training",                                    category: "Training" },
-  { code: "3001", name: "Gulf Corporate Meeting",                               category: "Meetings" },
-  { code: "3002", name: "Business Units",                                       category: "Meetings" },
-  { code: "3003", name: "Project Companies",                                    category: "Meetings" },
-  { code: "3004", name: "GES Board",                                            category: "Meetings" },
-  { code: "3005", name: "GES Inter Department",                                 category: "Meetings" },
-  { code: "3101", name: "Domestic Traveling",                                   category: "Traveling" },
-  { code: "3102", name: "Oversea Traveling",                                    category: "Traveling" },
-  { code: "4001", name: "Gulf and Affiliates",                                  category: "Business Development" },
-  { code: "4002", name: "External",                                             category: "Business Development" },
-  { code: "4003", name: "Marketing",                                            category: "Business Development" },
-  { code: "5001", name: "R&D / Technical Investigation / Procedure Development Work", category: "Lessons Learned & Process Improvement" },
-  { code: "5002", name: "Project Review",                                       category: "Lessons Learned & Process Improvement" },
-  { code: "8101", name: "General Administration",                               category: "Department/Corporate Work" },
-  { code: "8102", name: "Compliance",                                           category: "Department/Corporate Work" },
-  { code: "8103", name: "Strategic Planning",                                   category: "Department/Corporate Work" },
-  { code: "8104", name: "Performance Management",                               category: "Department/Corporate Work" },
-  { code: "8105", name: "HR Development",                                       category: "Department/Corporate Work" },
-  { code: "8106", name: "Interview",                                            category: "Department/Corporate Work" },
-  { code: "9001", name: "Unassigned / Waiting for Assignment",                  category: "Unassigned" },
-];
 
 // ══════════════════════════════════════════════════════════════════════════
 // TASKS TAB
@@ -332,7 +251,6 @@ function TasksTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
-  const [taskType, setTaskType] = useState<"project" | "oh">("project");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -349,12 +267,7 @@ function TasksTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Split tasks into project vs OH
-  const isOH = (t: TaskCode) => OH_CATEGORIES.has(t.category);
-  const displayTasks = tasks.filter((t) => taskType === "oh" ? isOH(t) : !isOH(t));
-
-  const categories = Array.from(new Set(displayTasks.map((t) => t.category))).sort();
-  // ใช้ categories จาก tasks ที่มีอยู่ใน DB เป็น dropdown options
+  const categories = Array.from(new Set(tasks.map((t) => t.category))).sort();
   const templateCategories = categories;
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -398,30 +311,19 @@ function TasksTab() {
     load();
   };
 
-  const filtered = displayTasks.filter((t) => {
+  const filtered = tasks.filter((t) => {
     const matchSearch = !search || t.code.toLowerCase().includes(search.toLowerCase()) || t.name.toLowerCase().includes(search.toLowerCase()) || t.category.toLowerCase().includes(search.toLowerCase());
     return matchSearch && (showInactive ? true : t.isActive);
   });
 
+  const handleClearAll = async () => {
+    if (!confirm("ลบรหัสงานทั้งหมด? (รายการที่มีการใช้งานใน Timesheet จะถูก deactivate แทน)")) return;
+    await fetch("/api/manage/tasks?all=1", { method: "DELETE" });
+    load();
+  };
+
   return (
     <div className="space-y-5">
-      {/* Sub-tabs: Project Tasks / OH Tasks */}
-      <div className="flex gap-1 border-b border-gray-200">
-        <button onClick={() => { setTaskType("project"); setShowAdd(false); setEditId(null); }}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${taskType === "project" ? "bg-white border border-b-white border-gray-200 -mb-px text-blue-900 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
-          📋 Project Tasks
-        </button>
-        <button onClick={() => { setTaskType("oh"); setShowAdd(false); setEditId(null); }}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${taskType === "oh" ? "bg-white border border-b-white border-gray-200 -mb-px text-blue-900 font-semibold" : "text-gray-500 hover:text-gray-700"}`}>
-          🏢 OH Tasks <span className="ml-1 text-xs text-orange-500 font-normal">(→ GES-OH)</span>
-        </button>
-      </div>
-
-      {taskType === "oh" && (
-        <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2.5 text-sm text-orange-800 flex items-center gap-2">
-          ⚠️ OH Tasks จะถูกบังคับให้เลือก Project เป็น <strong>GES-OH – Overhead/Non-Project</strong> อัตโนมัติใน Timesheet
-        </div>
-      )}
 
       {importMsg && (
         <div className={`px-4 py-2.5 rounded-lg text-sm flex items-center justify-between ${importMsg.type === "success" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
@@ -442,6 +344,9 @@ function TasksTab() {
           <button onClick={() => importRef.current?.click()} disabled={importing}
             className="ges-btn-secondary text-sm">
             {importing ? "⏳ Importing…" : "📥 Import Excel"}
+          </button>
+          <button onClick={handleClearAll} className="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+            🗑 ลบทั้งหมด
           </button>
           <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); }} className="ges-btn-primary text-sm">+ เพิ่มรหัสงาน</button>
         </div>

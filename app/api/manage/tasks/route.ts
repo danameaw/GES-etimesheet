@@ -78,9 +78,24 @@ export async function DELETE(req: NextRequest) {
   if (err) return err;
 
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const id  = searchParams.get("id");
+  const all = searchParams.get("all");
 
+  // DELETE all — ลบทุก task ที่ไม่มี timesheetEntry ใช้งาน, soft-delete ที่เหลือ
+  if (all === "1") {
+    // Hard delete tasks ที่ไม่มี entries เลย
+    await prisma.taskCode.deleteMany({
+      where: { entries: { none: {} } },
+    });
+    // Soft-delete ที่ยังมี entries (ป้องกัน FK violation)
+    await prisma.taskCode.updateMany({
+      where: { entries: { some: {} } },
+      data: { isActive: false },
+    });
+    return NextResponse.json({ success: true });
+  }
+
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
   await prisma.taskCode.update({ where: { id }, data: { isActive: false } });
   return NextResponse.json({ success: true });
 }
