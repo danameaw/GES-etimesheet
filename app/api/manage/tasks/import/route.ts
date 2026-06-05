@@ -4,16 +4,6 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import * as XLSX from "xlsx";
 
-/**
- * POST /api/manage/tasks/import
- * รับไฟล์ Excel (task.xlsx) แล้ว upsert task codes เข้า DB
- *
- * รูปแบบ Excel ที่รองรับ:
- *   Sheet "Project Task List" และ/หรือ "OH Task List"
- *   คอลัมน์: [ignore, Task Number, Task Name]
- *   - แถวที่ Task Number มีตัวอักษร (เช่น "001x", "Holiday") → เป็น category header
- *   - แถวที่ Task Number เป็นตัวเลขล้วน → เป็น task item
- */
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,52 +20,61 @@ export async function POST(req: NextRequest) {
   const tasks: { code: string; name: string; category: string }[] = [];
 
   for (const sheetName of wb.SheetNames) {
+    // ข้าม sheet Categories
+    if (sheetName.toLowerCase().includes("categor")) continue;
+
     const ws = wb.Sheets[sheetName];
     const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    if (rows.length === 0) continue;
 
-    let currentCategory = "";
+    // ตรวจว่าเป็น format ไหน
+    // Format A (Template ใหม่): header row = ["Code", "Task Name", "Category"]
+    // Format B (task.xlsx เดิม): col[0]=blank, col[1]=code/category, col[2]=name
+    const headerRow = rows[0].map((c: any) => String(c ?? "").trim().toLowerCase());
+    const isTemplateFormat = headerRow[0] === "code" && headerRow[2] === "category";
 
-    for (const row of rows) {
-      const rawCode = row[1];
-      const rawName = row[2];
+    if (isTemplateFormat) {
+      // ── Format A: Code | Task Name | Category ──
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const codeRaw     = String(row[0] ?? "").trim();
+        const nameRaw     = String(row[1] ?? "").trim();
+        const categoryRaw = String(row[2] ?? "").trim();
 
-      if (!rawCode && !rawName) continue;
+        if (!codeRaw || !nameRaw || !categoryRaw) continue;
 
-      const codeStr = String(rawCode ?? "").trim();
-      const nameStr = String(rawName ?? "").trim();
+        // Zero-pad code 4 ตัว
+        const isNumeric = /^\d+$/.test(codeRaw);
+        const paddedCode = isNumeric ? codeRaw.padStart(4, "0") : codeRaw.toUpperCase();
 
-      if (!codeStr) continue;
-
-      // ตัดแถว header ที่ไม่มีชื่อ (เช่น "HO Support Tasks" ที่ col 1)
-      // ถ้า codeStr มีตัวอักษร (เช่น "001x", "01xx", "Holiday", "Training") → category
-      const isNumeric = /^\d+$/.test(codeStr);
-
-      if (!isNumeric) {
-        // เป็น category header — ใช้ชื่อ task (col 2) ถ้ามี ไม่งั้นใช้ codeStr
-        const catName = nameStr || codeStr;
-        // ข้าม header หลักอย่าง "HO Support Tasks" ที่ไม่มี col 2
-        if (!nameStr && !/\d/.test(codeStr)) {
-          currentCategory = codeStr; // เช่น "Holiday", "Training"
-        } else {
-          currentCategory = catName; // เช่น "Project Management&Administration"
-        }
-        continue;
+        tasks.push({ code: paddedCode, name: nameRaw, category: categoryRaw });
       }
+    } else {
+      // ── Format B: task.xlsx เดิม [blank, code/header, name] ──
+      let currentCategory = "";
+      for (const row of rows) {
+        const rawCode = row[1];
+        const rawName = row[2];
+        if (!rawCode && !rawName) continue;
 
-      // เป็น task item
-      if (!nameStr || !currentCategory) continue;
+        const codeStr = String(rawCode ?? "").trim();
+        const nameStr = String(rawName ?? "").trim();
+        if (!codeStr) continue;
 
-      // Zero-pad code ให้ยาว 4 ตัว (เช่น 1001 → "1001", 11 → "0011")
-      const paddedCode = codeStr.padStart(4, "0");
-
-      tasks.push({ code: paddedCode, name: nameStr, category: currentCategory });
+        const isNumeric = /^\d+$/.test(codeStr);
+        if (!isNumeric) {
+          currentCategory = nameStr || codeStr;
+          continue;
+        }
+        if (!nameStr || !currentCategory) continue;
+        tasks.push({ code: codeStr.padStart(4, "0"), name: nameStr, category: currentCategory });
+      }
     }
   }
 
   if (tasks.length === 0)
-    return NextResponse.json({ error: "ไม่พบ task codes ในไฟล์" }, { status: 400 });
+    return NextResponse.json({ error: "ไม่พบ task codes ในไฟล์ กรุณาตรวจสอบว่ากรอกข้อมูลครบ (Code, Task Name, Category)" }, { status: 400 });
 
-  // Upsert ทั้งหมด
   let upserted = 0;
   for (const t of tasks) {
     await prisma.taskCode.upsert({
@@ -86,5 +85,5 @@ export async function POST(req: NextRequest) {
     upserted++;
   }
 
-  return NextResponse.json({ success: true, upserted, tasks });
+  return NextResponse.json({ success: true, upserted });
 }
