@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
 
     for (const ts of timesheets) {
       for (const entry of ts.entries) {
+        if (entry.totalHrs === 0) continue;
         rows.push([
           ts.employee.employeeId,
           ts.employee.name,

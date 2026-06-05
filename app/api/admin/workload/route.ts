@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["ges_management", "admin", "md"].includes(role))
+  if (!["ges_management", "admin", "md", "pd"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
