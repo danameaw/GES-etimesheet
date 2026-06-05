@@ -484,6 +484,13 @@ export default function AdminPage() {
                                 </button>
                               </>
                             )}
+                            {isPD && ["approved","rejected"].includes(emp.status) && (
+                              <button onClick={() => act(emp.timesheetId, "unlock")}
+                                disabled={acting.has(emp.timesheetId)}
+                                className="text-xs text-amber-600 hover:text-amber-700 border border-amber-300 px-2 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
+                                🔓 ยกเลิก
+                              </button>
+                            )}
                             {isAdmin && (
                               <Link href={`/admin/edit?empId=${emp.id}&week=${format(currentWeek, "yyyy-MM-dd")}`}
                                 className="text-xs text-blue-600 hover:underline">✏️</Link>
