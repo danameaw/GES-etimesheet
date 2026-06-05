@@ -647,21 +647,21 @@ export default function AdminPage() {
                         <td className="text-center"><StatusBadge status={emp.status} /></td>
                         <td className="text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {isPD && emp.status === "submitted" && (
+                            {canApprove && emp.status === "submitted" && (
                               <>
                                 <button onClick={() => act(emp.timesheetId, "approve")}
                                   disabled={acting.has(emp.timesheetId)}
                                   className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 disabled:opacity-50">
-                                  ✓
+                                  ✓ อนุมัติ
                                 </button>
                                 <button onClick={() => act(emp.timesheetId, "reject")}
                                   disabled={acting.has(emp.timesheetId)}
                                   className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 disabled:opacity-50">
-                                  ✗
+                                  ✗ ไม่อนุมัติ
                                 </button>
                               </>
                             )}
-                            {isPD && ["approved","rejected"].includes(emp.status) && (
+                            {canApprove && ["approved","rejected"].includes(emp.status) && (
                               <button onClick={() => act(emp.timesheetId, "unlock")}
                                 disabled={acting.has(emp.timesheetId)}
                                 className="text-xs text-amber-600 hover:text-amber-700 border border-amber-300 px-2 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
