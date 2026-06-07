@@ -134,12 +134,23 @@ export async function GET(req: NextRequest) {
   const weeklyTrend: { week: string; utilization: number; totalHrs: number; capacity: number }[] = [];
   const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
 
+  // Leave/Holiday task codes ที่ไม่นับใน Utilization
+  const LEAVE_CODES = ["1001", "1002", "1003", "1004", "1005"];
+
   async function getWeekHrs(wStart: Date) {
     const wTs = await prisma.timesheet.findMany({
       where: { weekStart: weekRange(wStart), status: { in: ["submitted","approved"] }, ...(projectId ? { entries: { some: { projectId } } } : {}) },
-      include: { entries: projectId ? { where: { projectId } } : true },
+      include: {
+        entries: {
+          where: projectId ? { projectId } : undefined,
+          include: { taskCode: { select: { code: true } } },
+        },
+      },
     });
-    return wTs.reduce((s, ts) => s + (ts.entries as any[]).reduce((ss: number, e: any) => ss + e.totalHrs, 0), 0);
+    // ไม่นับ Leave/Holiday (1001-1005) ใน utilization
+    return wTs.reduce((s, ts) =>
+      s + (ts.entries as any[]).reduce((ss: number, e: any) =>
+        LEAVE_CODES.includes(e.taskCode?.code) ? ss : ss + e.totalHrs, 0), 0);
   }
 
   // Count Mon–Fri holidays in a 7-day window starting from wStart
@@ -231,7 +242,11 @@ export async function GET(req: NextRequest) {
     return { projectId: pid, projectNumber: proj?.projectNumber || "?", projectName: proj?.projectName || "?", months, totalPlanned, totalActual };
   }).filter((p) => p.totalPlanned > 0 || p.totalActual > 0);
 
-  const totalHours   = entries.reduce((s, e) => s + e.totalHrs, 0);
+  const LEAVE_TASK_CODES = ["1001", "1002", "1003", "1004", "1005"];
+  const totalHours       = entries.reduce((s, e) => s + e.totalHrs, 0);
+  const totalWorkHours   = entries
+    .filter((e) => !LEAVE_TASK_CODES.includes(e.taskCode.code))
+    .reduce((s, e) => s + e.totalHrs, 0);
   const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
 
   // ── Employee matrix (for GES Management dept view) ──────────────────────
@@ -293,7 +308,7 @@ export async function GET(req: NextRequest) {
 
   // ── 6. Leave/Holiday Breakdown (task category "Leave") ──
   const leaveEntries = entries.filter((e) =>
-    e.taskCode.category === "Leave" || e.taskCode.code === "1001"
+    LEAVE_TASK_CODES.includes(e.taskCode.code) || e.taskCode.category === "Holiday"
   );
   const leaveByEmp = new Map<string, { name: string; employeeId: string; department: string; hours: number }>();
   for (const e of leaveEntries) {
@@ -316,6 +331,6 @@ export async function GET(req: NextRequest) {
     empActualMatrix,
     matrixMonths:    matMonths,
     leaveBreakdown,
-    summary: { totalHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode, totalLeaveHrs },
+    summary: { totalHours, totalWorkHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode, totalLeaveHrs },
   });
 }

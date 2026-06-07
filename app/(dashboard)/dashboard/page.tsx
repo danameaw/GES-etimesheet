@@ -35,7 +35,7 @@ interface DashData {
   empActualMatrix:  MatrixEmp[];
   matrixMonths:     MatrixMonth[];
   leaveBreakdown:   LeaveRow[];
-  summary:          { totalHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number };
+  summary:          { totalHours: number; totalWorkHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number };
 }
 
 export default function DashboardPage() {
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           {/* ── KPI row ── */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
             {[
-              { label: "ชั่วโมงจริง",    value: `${data.summary.totalHours}h`,    sub: "Actual logged",    color: "text-blue-900" },
+              { label: "ชั่วโมงจริง",    value: `${data.summary.totalWorkHours}h`, sub: "ไม่รวม Leave",    color: "text-blue-900" },
               { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: "Planned total",    color: "text-purple-700" },
               { label: "Utilization",    value: `${utilizationPct}%`,              sub: "Actual / Plan",    color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
               { label: "Timesheets",     value: data.summary.submittedCount,       sub: "ส่งแล้ว",          color: "text-gray-800" },
@@ -239,7 +239,7 @@ export default function DashboardPage() {
             {/* Chart 3: Utilization Trend */}
             <div className="ges-card p-5 lg:col-span-3">
               <h2 className="font-semibold text-gray-800 mb-1">③ Utilization Trend</h2>
-              <p className="text-xs text-gray-400 mb-3">% ชั่วโมงจริง / (40h × จำนวนพนักงาน) · เส้นแดง = เป้า 80%</p>
+              <p className="text-xs text-gray-400 mb-3">% ชั่วโมงงาน (ไม่รวม Leave) ÷ Capacity · เส้นแดง = เป้า 80%</p>
               {data.weeklyTrend.length === 0 ? (
                 <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
               ) : (
