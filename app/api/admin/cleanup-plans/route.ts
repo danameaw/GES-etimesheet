@@ -40,7 +40,12 @@ export async function GET() {
     data: { planStatus: "draft" },
   });
 
-  // ── 5. ลบ Timesheets ที่ไม่มี entries (orphaned) ──────────────────────────
+  // ── 5. ลบ Timesheets ทั้งหมดของ employee ที่ inactive (ทุก status) ──────────
+  const deletedInactiveTimesheets = await prisma.timesheet.deleteMany({
+    where: { employee: { isActive: false } },
+  });
+
+  // ── 6. ลบ Timesheets ที่ไม่มี entries (orphaned) ──────────────────────────
   const emptyTimesheets = await prisma.timesheet.findMany({
     where: { entries: { none: {} } },
     select: { id: true },
@@ -50,11 +55,12 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    message: "Cleanup complete — all draft/submitted plans removed",
+    message: "Cleanup complete",
     deletedEmpPlans_draftOrSubmitted: deletedEmpPlansDraft.count,
     deletedEmpPlans_inactiveEmployees: deletedInactiveEmpPlans.count,
     deletedDeptPlans: deletedDeptPlans.count,
     projectsResetToDraft: resetProjects.count,
+    deletedTimesheets_inactiveEmployees: deletedInactiveTimesheets.count,
     deletedEmptyTimesheets: deletedTimesheets.count,
     inactiveEmployeesAffected: inactiveEmps.map((e) => `${e.employeeId} – ${e.name}`),
   });

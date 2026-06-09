@@ -25,12 +25,12 @@ export async function GET(req: NextRequest) {
   const forApproval = searchParams.get("forApproval") === "1";
 
   // Build project filter:
-  // PM        → own projects (managerId = empDbId)
-  // PD normal → projects where pdId = empDbId
-  // PD/admin forApproval → all active non-draft projects
-  // admin     → all active projects
+  // pd normal      → projects where pdId = empDbId
+  // pd forApproval → all active non-draft projects
+  // ges_management → same as pd
+  // admin / md     → all active projects (forApproval: non-draft only)
   let projectWhere: any = { isActive: true };
-  if (role === "ges_management") {
+  if (role === "pd" || role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
       : { pdId: empDbId, isActive: true };

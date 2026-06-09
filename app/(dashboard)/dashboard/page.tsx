@@ -317,7 +317,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
               <div>
                 <h2 className="font-semibold text-gray-800">⑤ 🏖️ Leave / Holiday</h2>
-                <p className="text-xs text-gray-400">ชั่วโมง Leave/Holiday ของพนักงานในช่วงเวลานี้ (task code 1001)</p>
+                <p className="text-xs text-gray-400">ชั่วโมง Leave/Holiday ของพนักงานในช่วงเวลานี้ (task code 1001–1005)</p>
               </div>
               {(data.summary.totalLeaveHrs ?? 0) > 0 && (
                 <span className="text-sm font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-full">

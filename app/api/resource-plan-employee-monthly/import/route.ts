@@ -8,6 +8,7 @@ const MONTH_MAP: Record<string, number> = {
   Jan: 1, Feb: 2, Mar: 3, Apr: 4,  May: 5,  Jun: 6,
   Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
 };
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function parseMonthLabel(label: string): { year: number; month: number } | null {
   if (!label || typeof label !== "string") return null;
@@ -17,6 +18,19 @@ function parseMonthLabel(label: string): { year: number; month: number } | null 
   const year  = parseInt(parts[1]);
   if (!month || isNaN(year)) return null;
   return { year, month };
+}
+
+/** รองรับ header ที่ Excel แปลงเป็น serial number (เช่น 44987 = Jun 2026)
+ *  Excel serial: วันที่นับจาก 1 ม.ค. 1900 (มี leap-year bug ที่ 60)
+ *  แปลง → JS Date → "MMM YYYY" แล้ว parse ปกติ */
+function cellToMonthParsed(val: any): { year: number; month: number } | null {
+  if (typeof val === "string") return parseMonthLabel(val);
+  if (typeof val === "number" && val > 40000 && val < 90000) {
+    // Excel → Unix epoch: serial 25569 = 1970-01-01
+    const d = new Date((val - 25569) * 86400000);
+    return parseMonthLabel(`${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`);
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -57,9 +71,10 @@ export async function POST(req: NextRequest) {
   const headerRow = rows[headerRowIdx] as string[];
 
   // Parse month columns (skip col 0 = User ID, col 1 = Name, col 2 = Dept)
+  // cellToMonthParsed รองรับทั้ง text "Jun 2026" และ Excel serial number (เมื่อ Excel แปลง header เป็น date)
   const monthCols: { colIdx: number; year: number; month: number }[] = [];
   for (let ci = 3; ci < headerRow.length; ci++) {
-    const parsed = parseMonthLabel(String(headerRow[ci]));
+    const parsed = cellToMonthParsed(headerRow[ci]);
     if (parsed) monthCols.push({ colIdx: ci, ...parsed });
   }
   if (monthCols.length === 0)
@@ -119,8 +134,8 @@ export async function POST(req: NextRequest) {
     for (const { colIdx, year, month } of monthCols) {
       const raw = row[colIdx];
       const parsed = parseFloat(String(raw));
-      if (isNaN(parsed) || parsed < 0) continue;
-      const hrs = resolveHrs(parsed, year, month);
+      // ถ้า cell ว่าง (NaN) → ถือว่าเป็น 0 (Excel เป็น source of truth ต้อง overwrite ค่าเก่าด้วย)
+      const hrs = isNaN(parsed) || parsed < 0 ? 0 : resolveHrs(parsed, year, month);
 
       await prisma.resourcePlanEmployeeMonthly.upsert({
         where: { projectId_employeeId_year_month: { projectId, employeeId: dbEmpId, year, month } },

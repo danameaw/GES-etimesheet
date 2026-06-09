@@ -64,12 +64,12 @@ export async function GET(req: NextRequest) {
     dateFilter = weekRange(new Date(weekParam + "T00:00:00.000Z"));
   }
 
-  // ── Timesheets ──
-  const tsWhere: any = { status: { in: ["submitted", "approved"] } };
+  // ── Timesheets ── (นับเฉพาะ employee ที่ยัง active เท่านั้น)
+  const tsWhere: any = { status: { in: ["submitted", "approved"] }, employee: { isActive: true } };
   if (Object.keys(dateFilter).length) tsWhere.weekStart = dateFilter;
   if (projectId) tsWhere.entries = { some: { projectId } };
   else if (pdProjectIds) tsWhere.entries = { some: { projectId: { in: pdProjectIds } } };
-  if (deptFilter) tsWhere.employee = { department: deptFilter };
+  if (deptFilter) tsWhere.employee = { ...tsWhere.employee, department: deptFilter };
 
   const allTS = await prisma.timesheet.findMany({
     where: tsWhere,

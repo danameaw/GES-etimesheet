@@ -614,7 +614,16 @@ export default function AdminPage() {
                 </div>
 
                 {/* Employees under this project */}
-                <table className="ges-table w-full">
+                <table className="ges-table w-full table-fixed">
+                  <colgroup>
+                    <col className="w-48" />
+                    <col className="w-36" />
+                    <col className="w-28" />
+                    <col className="w-28" />
+                    <col className="w-24" />
+                    <col className="w-28" />
+                    <col className="w-36" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th className="text-left">พนักงาน</th>

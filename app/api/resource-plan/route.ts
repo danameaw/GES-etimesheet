@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
 
   // Determine which projects this user can see
   // PD and admin see all projects; PM only sees their own
-  const projectWhere = role === "pd" ? { managerId: empDbId } : {};
+  // pd → เห็นเฉพาะ project ที่ตัวเองเป็น PD หรือ Manager
+  const projectWhere = role === "pd"
+    ? { OR: [{ pdId: empDbId }, { managerId: empDbId }] }
+    : {};
   const myProjects = await prisma.project.findMany({
     where: { ...projectWhere, isActive: true },
     include: { manager: { select: { id: true, name: true, employeeId: true } } },
