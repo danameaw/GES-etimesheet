@@ -5,29 +5,33 @@ import { authOptions } from "@/lib/auth";
 
 const MONTH_NAMES_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 
-// Calculate standard hours for a given year/month (8h × Mon-Fri days minus holidays)
-async function calcStandardHrs(year: number, month: number) {
-  const daysInMonth = new Date(year, month, 0).getDate();
-  let workingDays = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(year, month - 1, d).getDay();
-    if (dow >= 1 && dow <= 5) workingDays++;
-  }
-  const holidays = await prisma.holiday.findMany({
-    where: { date: { gte: new Date(year, month - 1, 1), lte: new Date(year, month - 1, daysInMonth) } },
-  });
-  const seen = new Set<string>();
-  let holidayWorkdays = 0;
-  for (const h of holidays) {
-    const key = new Date(h.date).toISOString().slice(0, 10);
-    if (!seen.has(key)) {
-      seen.add(key);
-      const dow = new Date(h.date).getDay();
-      if (dow >= 1 && dow <= 5) holidayWorkdays++;
-    }
-  }
-  return (workingDays - holidayWorkdays) * 8;
-}
+// Fixed standard hours per month (1 MM = 176 hr)
+// To revert to dynamic calculation (working days × 8 hr minus holidays), restore the
+// calcStandardHrs function below and replace STD_HOURS_PER_MONTH usage with its result:
+//
+// async function calcStandardHrs(year: number, month: number) {
+//   const daysInMonth = new Date(year, month, 0).getDate();
+//   let workingDays = 0;
+//   for (let d = 1; d <= daysInMonth; d++) {
+//     const dow = new Date(year, month - 1, d).getDay();
+//     if (dow >= 1 && dow <= 5) workingDays++;
+//   }
+//   const holidays = await prisma.holiday.findMany({
+//     where: { date: { gte: new Date(year, month - 1, 1), lte: new Date(year, month - 1, daysInMonth) } },
+//   });
+//   const seen = new Set<string>();
+//   let holidayWorkdays = 0;
+//   for (const h of holidays) {
+//     const key = new Date(h.date).toISOString().slice(0, 10);
+//     if (!seen.has(key)) {
+//       seen.add(key);
+//       const dow = new Date(h.date).getDay();
+//       if (dow >= 1 && dow <= 5) holidayWorkdays++;
+//     }
+//   }
+//   return (workingDays - holidayWorkdays) * 8;
+// }
+const STD_HOURS_PER_MONTH = 176;
 
 // GET /api/admin/workload?year=2026
 export async function GET(req: NextRequest) {
@@ -67,15 +71,8 @@ export async function GET(req: NextRequest) {
   for (const p of plans) monthSet.add(p.month);
   const months = Array.from(monthSet).sort((a, b) => a - b);
 
-  // Calculate standard hours per month
-  const standardHrsMap = new Map<number, number>();
-  await Promise.all(months.map(async (m) => {
-    const hrs = await calcStandardHrs(year, m);
-    standardHrsMap.set(m, hrs);
-  }));
-
   const monthMeta = months.map((m) => ({
-    month: m, name: MONTH_NAMES_TH[m - 1], standardHrs: standardHrsMap.get(m) ?? 160,
+    month: m, name: MONTH_NAMES_TH[m - 1], standardHrs: STD_HOURS_PER_MONTH,
   }));
 
   // Fetch actual hours per employee per month in this year (submitted/approved timesheets)

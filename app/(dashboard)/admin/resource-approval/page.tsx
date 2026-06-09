@@ -28,7 +28,7 @@ export default function ResourceApprovalPage() {
   const [year, setYear]   = useState(new Date().getFullYear());
   const [data, setData]   = useState<WorkloadData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [acting, setActing]   = useState<string | null>(null);
+  const [acting, setActing]   = useState<string | null>(null);  // "<projectId>:<action>"
   const [mdView, setMdView]   = useState<"workload" | "approve" | "projects">("workload");
 
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
@@ -43,15 +43,17 @@ export default function ResourceApprovalPage() {
 
   useEffect(() => { if (canAccess) load(); }, [load, canAccess]);
 
-  async function approveProject(projectId: string) {
-    setActing(projectId);
+  async function planAction(projectId: string, action: string) {
+    setActing(`${projectId}:${action}`);
     await fetch("/api/resource-plan-monthly", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "approve", projectId }),
+      body: JSON.stringify({ action, projectId }),
     });
     setActing(null);
     load();
   }
+
+  const approveProject = (id: string) => planAction(id, "approve");
 
   if (!canAccess) return null;
 
@@ -115,7 +117,7 @@ export default function ResourceApprovalPage() {
           data={data}
           loading={loading}
           acting={acting}
-          approveProject={approveProject}
+          planAction={planAction}
         />
 
       /* ── Tab: Plan/Actual รายแผนก (workload, view-only for MD) ── */
@@ -272,9 +274,9 @@ function DeptTable({ dept, months, canApprove, acting, approveProject }: {
 }
 
 // ── Approve Plan by Project (MD — Management + Project Management only) ──────
-function ApprovePlanByProject({ data, loading, acting, approveProject }: {
+function ApprovePlanByProject({ data, loading, acting, planAction }: {
   data: WorkloadData | null; loading: boolean;
-  acting: string | null; approveProject: (id: string) => void;
+  acting: string | null; planAction: (id: string, action: string) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -326,18 +328,20 @@ function ApprovePlanByProject({ data, loading, acting, approveProject }: {
   return (
     <div className="space-y-4">
       {projects.map((proj) => {
-        const isExpanded  = expandedId === proj.projectId;
-        const isSubmitted = proj.planStatus === "submitted";
-        const isApproved  = proj.planStatus === "approved";
-        const totalPlan   = proj.employees.reduce((s, e) =>
+        const isExpanded          = expandedId === proj.projectId;
+        const isSubmitted         = proj.planStatus === "submitted";
+        const isApproved          = proj.planStatus === "approved";
+        const isRevisionRequested = proj.planStatus === "revision_requested";
+        const totalPlan           = proj.employees.reduce((s, e) =>
           s + data.months.reduce((ms, m) => ms + (e.monthPlans[m.month] ?? 0), 0), 0);
 
         return (
           <div key={proj.projectId} className="ges-card overflow-hidden">
             {/* Project header */}
             <div className={`px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b ${
-              isApproved  ? "bg-green-50 border-green-100"
-              : isSubmitted ? "bg-amber-50 border-amber-100"
+              isApproved          ? "bg-green-50 border-green-100"
+              : isSubmitted       ? "bg-amber-50 border-amber-100"
+              : isRevisionRequested ? "bg-blue-50 border-blue-100"
               : "bg-gray-50 border-gray-100"
             }`}>
               <div>
@@ -356,13 +360,28 @@ function ApprovePlanByProject({ data, loading, acting, approveProject }: {
                   {isExpanded ? "ซ่อน" : "ดูรายละเอียด"}
                 </button>
                 {isSubmitted && (
-                  <button onClick={() => approveProject(proj.projectId)} disabled={acting === proj.projectId}
+                  <button onClick={() => planAction(proj.projectId, "approve")}
+                    disabled={acting === `${proj.projectId}:approve`}
                     className="text-sm bg-green-600 text-white px-4 py-1.5 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium">
-                    {acting === proj.projectId ? "…" : "✓ Approve"}
+                    {acting === `${proj.projectId}:approve` ? "…" : "✓ Approve"}
                   </button>
                 )}
                 {isApproved && (
                   <span className="text-sm text-green-600 font-semibold">✓ Approved แล้ว</span>
+                )}
+                {isRevisionRequested && (
+                  <>
+                    <button onClick={() => planAction(proj.projectId, "approve_revision")}
+                      disabled={!!acting}
+                      className="text-sm bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
+                      {acting === `${proj.projectId}:approve_revision` ? "…" : "✓ ยินยอมให้แก้ไข"}
+                    </button>
+                    <button onClick={() => planAction(proj.projectId, "reject_revision")}
+                      disabled={!!acting}
+                      className="text-sm bg-red-500 text-white px-4 py-1.5 rounded-lg hover:bg-red-600 disabled:opacity-50 font-medium">
+                      {acting === `${proj.projectId}:reject_revision` ? "…" : "✗ ไม่อนุญาต"}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
