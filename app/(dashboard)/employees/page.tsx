@@ -444,6 +444,16 @@ export default function EmployeesPage() {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Level</label>
+                <input
+                  type="text"
+                  value={form.level}
+                  onChange={(e) => setForm({ ...form, level: e.target.value })}
+                  placeholder="เช่น Engineer I, Senior Engineer II"
+                  className="ges-input"
+                />
+              </div>
               {modal === "edit" && (
                 <div className="flex items-center gap-3">
                   <input

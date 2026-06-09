@@ -100,6 +100,15 @@ export async function GET(req: NextRequest) {
   wsData.push(totalRow);
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Force month header cells to text type so Excel doesn't auto-convert "Jul 2025" → date
+  const headerRowIdx = 4; // 0-based: rows 0-3 are title/blank, row 4 is header
+  const monthColStart = 3; // cols 0=UserID, 1=Name, 2=Dept, 3+=months
+  for (let ci = monthColStart; ci < monthColStart + months.length; ci++) {
+    const addr = XLSX.utils.encode_cell({ r: headerRowIdx, c: ci });
+    if (ws[addr]) { ws[addr].t = "s"; ws[addr].z = "@"; }
+  }
+
   ws["!cols"] = [{ wch: 12 }, { wch: 24 }, { wch: 22 }, ...months.map(() => ({ wch: 11 })), { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, ws, "Resource Plan");
 

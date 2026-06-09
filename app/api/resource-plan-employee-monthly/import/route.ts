@@ -72,27 +72,33 @@ export async function POST(req: NextRequest) {
   });
   const empLookup = new Map(allEmployees.map((e) => [e.employeeId.toUpperCase(), e.id]));
 
-  // Pre-compute standard hours for each month column (for MM multiplier conversion)
-  const stdHoursMap = new Map<string, number>(); // key: "year|month"
-  for (const { year, month } of monthCols) {
-    const key = `${year}|${month}`;
-    if (stdHoursMap.has(key)) continue;
-    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    const mStart = new Date(Date.UTC(year, month - 1, 1));
-    const mEnd   = new Date(Date.UTC(year, month, 1));
-    const holidays = await prisma.holiday.findMany({ where: { date: { gte: mStart, lt: mEnd } }, select: { date: true } });
-    const holidayDays = new Set(holidays.map((h) => new Date(h.date).getUTCDate()));
-    let hrs = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dow = new Date(Date.UTC(year, month - 1, d)).getUTCDay();
-      if (dow >= 1 && dow <= 5 && !holidayDays.has(d)) hrs += 8;
-    }
-    stdHoursMap.set(key, hrs);
-  }
+  // Standard hours per month used for MM multiplier conversion (1 MM = STD_HOURS_PER_MONTH hrs)
+  // To revert to dynamic calculation (count actual working days minus holidays × 8 hr), replace this
+  // constant with the block below and uncomment it:
+  //
+  // const stdHoursMap = new Map<string, number>();
+  // for (const { year, month } of monthCols) {
+  //   const key = `${year}|${month}`;
+  //   if (stdHoursMap.has(key)) continue;
+  //   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  //   const mStart = new Date(Date.UTC(year, month - 1, 1));
+  //   const mEnd   = new Date(Date.UTC(year, month, 1));
+  //   const holidays = await prisma.holiday.findMany({ where: { date: { gte: mStart, lt: mEnd } }, select: { date: true } });
+  //   const holidayDays = new Set(holidays.map((h) => new Date(h.date).getUTCDate()));
+  //   let hrs = 0;
+  //   for (let d = 1; d <= daysInMonth; d++) {
+  //     const dow = new Date(Date.UTC(year, month - 1, d)).getUTCDay();
+  //     if (dow >= 1 && dow <= 5 && !holidayDays.has(d)) hrs += 8;
+  //   }
+  //   stdHoursMap.set(key, hrs);
+  // }
+  // Then change resolveHrs to: return Math.round(v * (stdHoursMap.get(`${year}|${month}`) ?? 0));
+  const STD_HOURS_PER_MONTH = 176;
 
   /** ถ้ากรอก 0 < v ≤ 1.5 → MM multiplier → แปลงเป็นชั่วโมงมาตรฐาน */
-  function resolveHrs(v: number, year: number, month: number): number {
-    if (v > 0 && v <= 1.5) return Math.round(v * (stdHoursMap.get(`${year}|${month}`) ?? 0));
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function resolveHrs(v: number, _year: number, _month: number): number {
+    if (v > 0 && v <= 1.5) return Math.round(v * STD_HOURS_PER_MONTH);
     return v;
   }
 
