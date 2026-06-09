@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 
   // Actual hours per employee per month for this project
   const actualEntries = await prisma.timesheetEntry.findMany({
-    where: { projectId },
+    where: { projectId, timesheet: { employee: { isActive: true } } },
     include: { timesheet: { select: { weekStart: true, employeeId: true } } },
   });
 

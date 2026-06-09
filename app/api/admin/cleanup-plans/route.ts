@@ -40,12 +40,17 @@ export async function GET() {
     data: { planStatus: "draft" },
   });
 
-  // ── 5. ลบ Timesheets ทั้งหมดของ employee ที่ inactive (ทุก status) ──────────
+  // ── 5. ลบ ResourcePlan (weekly) ของ employee ที่ inactive ────────────────
+  const deletedInactiveWeeklyPlans = await prisma.resourcePlan.deleteMany({
+    where: { employee: { isActive: false } },
+  });
+
+  // ── 6. ลบ Timesheets ทั้งหมดของ employee ที่ inactive (ทุก status) ──────────
   const deletedInactiveTimesheets = await prisma.timesheet.deleteMany({
     where: { employee: { isActive: false } },
   });
 
-  // ── 6. ลบ Timesheets ที่ไม่มี entries (orphaned) ──────────────────────────
+  // ── 7. ลบ Timesheets ที่ไม่มี entries (orphaned) ──────────────────────────
   const emptyTimesheets = await prisma.timesheet.findMany({
     where: { entries: { none: {} } },
     select: { id: true },
@@ -60,6 +65,7 @@ export async function GET() {
     deletedEmpPlans_inactiveEmployees: deletedInactiveEmpPlans.count,
     deletedDeptPlans: deletedDeptPlans.count,
     projectsResetToDraft: resetProjects.count,
+    deletedWeeklyPlans_inactiveEmployees: deletedInactiveWeeklyPlans.count,
     deletedTimesheets_inactiveEmployees: deletedInactiveTimesheets.count,
     deletedEmptyTimesheets: deletedTimesheets.count,
     inactiveEmployeesAffected: inactiveEmps.map((e) => `${e.employeeId} – ${e.name}`),

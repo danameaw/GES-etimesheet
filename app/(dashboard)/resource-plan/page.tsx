@@ -96,6 +96,7 @@ export default function ResourcePlanPage() {
   useEffect(() => { if (canAccess) load(); }, [canAccess, load]);
   useEffect(() => {
     if (selectedProject) {
+      setImportMsg(null); // reset import message when switching projects
       load(selectedProject);
       loadEmp(selectedProject);
     }
