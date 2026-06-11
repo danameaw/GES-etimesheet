@@ -13,7 +13,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role: empRole, isActive, level } = body;
+  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept } = body;
 
   // PD can ONLY change level
   if (role === "ges_management") {
@@ -42,6 +42,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ...(empRole && { role: empRole }),
       ...(isActive !== undefined && { isActive }),
       ...(level !== undefined && { level: String(level) }),
+      ...(managedDept !== undefined && { managedDept: managedDept.trim() }),
     },
   });
 

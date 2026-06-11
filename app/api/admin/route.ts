@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
-  if (!["admin", "pd", "md", "ges_management"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "pd", "ges_pd", "md", "ges_management"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const weekParam = searchParams.get("week");
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   // ── For PD: find their projects (pdId OR managerId) ──────────────────────
   let pdProjectIds: Set<string> | null = null;
-  if (role === "pd") {
+  if (role === "pd" || role === "ges_pd") {
     const pdProjects = await prisma.project.findMany({
       where: { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] },
       select: { id: true },

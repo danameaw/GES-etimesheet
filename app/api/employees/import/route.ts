@@ -7,7 +7,7 @@ const DEPARTMENTS = [
   "Management", "Project Management", "Engineering", "Construction",
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
-const ROLES = ["employee", "pd", "ges_management", "admin", "md"];
+const ROLES = ["employee", "pd", "ges_pd", "ges_management", "admin", "md"];
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const role     = (session.user as any).role;
   const empDbId  = (session.user as any).id;
 
-  if (!["pd", "ges_management", "admin", "md"].includes(role))
+  if (!["pd", "ges_pd", "ges_management", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // ges_management → same as pd
   // admin / md     → all active projects (forApproval: non-draft only)
   let projectWhere: any = { isActive: true };
-  if (role === "pd" || role === "ges_management") {
+  if (role === "pd" || role === "ges_pd" || role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
       : { pdId: empDbId, isActive: true };
@@ -125,7 +125,7 @@ export async function PATCH(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
 
-  if (!["pd", "ges_management", "admin", "md"].includes(role))
+  if (!["pd", "ges_pd", "ges_management", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { action, projectId } = await req.json();

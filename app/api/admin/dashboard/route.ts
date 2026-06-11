@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, subWeeks, format, addDays } from "date-fns";
+import { isPD, isGesMgmt } from "@/lib/roles";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
-  if (!["ges_management", "admin", "md", "pd"].includes(role))
+  if (!["ges_management", "ges_pd", "admin", "md", "pd"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -26,16 +27,16 @@ export async function GET(req: NextRequest) {
   const mode       = monthParam ? "month" : "week";
 
   // ── Role-based auto-filters ──────────────────────────────────────────────
-  // GES Management: filter to own department automatically
+  // GES Management (incl. ges_pd): auto-filter to their managed department
   let deptFilter = searchParams.get("dept") || "";
-  if (role === "ges_management" && !deptFilter) {
-    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { department: true } });
-    deptFilter = me?.department ?? "";
+  if (isGesMgmt(role) && !deptFilter) {
+    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true } });
+    deptFilter = me?.managedDept ?? "";
   }
 
-  // PD: restrict to own projects
+  // PD (incl. ges_pd): restrict to own projects
   let pdProjectIds: string[] | null = null;
-  if (role === "pd") {
+  if (isPD(role)) {
     const pdProjs = await prisma.project.findMany({
       where: { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] },
       select: { id: true },

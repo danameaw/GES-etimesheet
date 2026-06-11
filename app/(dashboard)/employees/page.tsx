@@ -12,6 +12,7 @@ interface Employee {
   position: string;
   level: string;
   role: string;
+  managedDept: string;
   isActive: boolean;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
 }
@@ -30,9 +31,10 @@ interface ImportRow {
 const ROLES = [
   { value: "employee", label: "Employee",        color: "bg-gray-100 text-gray-700" },
   { value: "pd",       label: "Project Director", color: "bg-blue-100 text-blue-700" },
-  { value: "ges_management", label: "GES Management", color: "bg-purple-100 text-purple-700" },
-  { value: "admin",    label: "Admin",            color: "bg-red-100 text-red-700" },
-  { value: "md",          label: "MD",               color: "bg-rose-100 text-rose-700" },
+  { value: "ges_management", label: "GES Management",  color: "bg-purple-100 text-purple-700" },
+  { value: "ges_pd",        label: "GES Mgmt / PD",   color: "bg-indigo-100 text-indigo-700" },
+  { value: "admin",         label: "Admin",            color: "bg-red-100 text-red-700" },
+  { value: "md",            label: "MD",               color: "bg-rose-100 text-rose-700" },
 ];
 
 const DEPARTMENTS = [
@@ -40,7 +42,7 @@ const DEPARTMENTS = [
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", isActive: true };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true };
 
 export default function EmployeesPage() {
   const { data: session } = useSession();
@@ -94,6 +96,7 @@ export default function EmployeesPage() {
       position: emp.position,
       level: emp.level || "",
       role: emp.role,
+      managedDept: emp.managedDept || "",
       isActive: emp.isActive,
     });
     setFormError("");
@@ -454,6 +457,21 @@ export default function EmployeesPage() {
                   className="ges-input"
                 />
               </div>
+              {(form.role === "ges_management" || form.role === "ges_pd") && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    แผนกที่ดูแล <span className="text-gray-400 font-normal">(สำหรับ Dashboard auto-filter)</span>
+                  </label>
+                  <select
+                    value={form.managedDept}
+                    onChange={(e) => setForm({ ...form, managedDept: e.target.value })}
+                    className="ges-input"
+                  >
+                    <option value="">-- ไม่ระบุ (เห็นทุก dept) --</option>
+                    {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              )}
               {modal === "edit" && (
                 <div className="flex items-center gap-3">
                   <input

@@ -44,7 +44,7 @@ export default function AdminPage() {
   const role    = (session?.user as any)?.role;
   const isAdmin = role === "admin";
   const isMD    = role === "md";
-  const isPD    = role === "pd";   // Project Director — อนุมัติ Timesheet
+  const isPD    = role === "pd" || role === "ges_pd";
   const canApprove    = isPD || isAdmin || isMD;  // เข้าหน้า approval ได้
   const canActApprove = isPD || isMD;             // อนุมัติ/reject ได้ (Admin ทำได้แค่ unlock)
 

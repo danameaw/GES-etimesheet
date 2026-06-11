@@ -22,7 +22,7 @@ export default function ResourceApprovalPage() {
   const { data: session } = useSession();
   const router   = useRouter();
   const role     = (session?.user as any)?.role;
-  const canAccess = ["ges_management", "admin", "md"].includes(role);
+  const canAccess = ["ges_management", "ges_pd", "admin", "md"].includes(role);
   const isMD      = role === "md";
 
   const [year, setYear]   = useState(new Date().getFullYear());

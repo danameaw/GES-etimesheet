@@ -7,6 +7,7 @@ const ROLE_LABELS: Record<string, string> = {
   employee:       "Employee",
   pd:             "Project Director",
   ges_management: "GES Management",
+  ges_pd:         "GES Mgmt / PD",
   admin:          "Admin",
   md:             "MD",
 };
@@ -15,6 +16,7 @@ const ROLE_COLORS: Record<string, string> = {
   employee:       "text-blue-200",
   pd:             "text-cyan-300",
   ges_management: "text-purple-300",
+  ges_pd:         "text-indigo-300",
   admin:          "text-amber-300",
   md:             "text-rose-300",
 };
@@ -25,9 +27,9 @@ export default function Navbar() {
   const role = (session?.user as any)?.role ?? "employee";
 
   const isAdmin   = role === "admin";
-  const isPD      = role === "pd";             // Project Director (เดิม PM)
-  const isGESMgmt = role === "ges_management"; // GES Management (เดิม PD)
-  const isMD      = role === "md";             // Managing Director (ใหม่)
+  const isPD      = role === "pd" || role === "ges_pd";
+  const isGESMgmt = role === "ges_management" || role === "ges_pd";
+  const isMD      = role === "md";
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },

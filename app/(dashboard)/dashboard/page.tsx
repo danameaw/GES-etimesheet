@@ -42,9 +42,9 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const role = (session?.user as any)?.role;
-  const isPD      = role === "pd";
-  const isGESMgmt = role === "ges_management";
-  const canAccess = ["ges_management","admin","md","pd"].includes(role);
+  const isPD      = role === "pd" || role === "ges_pd";
+  const isGESMgmt = role === "ges_management" || role === "ges_pd";
+  const canAccess = ["ges_management","ges_pd","admin","md","pd"].includes(role);
   useEffect(() => { if (session && !canAccess) router.push("/timesheet"); }, [session, canAccess, router]);
 
   const dashTitle = isPD ? "Dashboard Project"

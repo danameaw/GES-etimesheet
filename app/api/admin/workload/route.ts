@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["ges_management", "admin", "md", "pd"].includes(role))
+  if (!["ges_management", "ges_pd", "admin", "md", "pd"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -48,9 +48,9 @@ export async function GET(req: NextRequest) {
 
   // ges_management: only own department
   let myDept: string | null = null;
-  if (role === "ges_management") {
-    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { department: true } });
-    myDept = me?.department ?? null;
+  if (role === "ges_management" || role === "ges_pd") {
+    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true } });
+    myDept = me?.managedDept || null;
   }
 
   // Fetch all plans for this year
