@@ -21,9 +21,10 @@ interface WorkloadData { year: number; months: MonthMeta[]; departments: DeptDat
 export default function ResourceApprovalPage() {
   const { data: session } = useSession();
   const router   = useRouter();
-  const role     = (session?.user as any)?.role;
-  const canAccess = ["ges_management", "ges_pd", "admin", "md"].includes(role);
-  const isMD      = role === "md";
+  const role        = (session?.user as any)?.role;
+  const managedDept = (session?.user as any)?.managedDept as string | undefined;
+  const canAccess   = ["ges_management", "ges_pd", "admin", "md"].includes(role);
+  const isMD        = role === "md";
 
   const [year, setYear]   = useState(new Date().getFullYear());
   const [data, setData]   = useState<WorkloadData | null>(null);
@@ -57,11 +58,16 @@ export default function ResourceApprovalPage() {
 
   if (!canAccess) return null;
 
-  // Dept filter: Approve tab → only Mgmt/PM, others → all
-  const displayDepts = (depts: DeptData[]): DeptData[] =>
-    isMD && mdView === "approve"
-      ? depts.filter((d) => MD_APPROVE_DEPTS.includes(d.name))
-      : depts;
+  // Dept filter:
+  // - MD approve tab → Management + Project Management only
+  // - ges_management/ges_pd → only their managedDept
+  // - admin → all
+  const displayDepts = (depts: DeptData[]): DeptData[] => {
+    if (isMD && mdView === "approve") return depts.filter((d) => MD_APPROVE_DEPTS.includes(d.name));
+    if (["ges_management", "ges_pd"].includes(role) && managedDept)
+      return depts.filter((d) => d.name === managedDept);
+    return depts;
+  };
 
   return (
     <div>
@@ -158,11 +164,38 @@ function DeptTable({ dept, months, canApprove, acting, approveProject }: {
   const getEmpMonthTotal = (emp: EmpData, month: number) =>
     emp.projects.reduce((s, p) => s + (p.monthPlans[month] ?? 0), 0);
 
+  // Unique projects in this dept that are submitted (need approval)
+  const pendingProjects = canApprove ? (() => {
+    const projMap = new Map<string, { projectId: string; projectNumber: string; projectName: string; planStatus: string }>();
+    for (const emp of dept.employees)
+      for (const proj of emp.projects)
+        if (!projMap.has(proj.projectId)) projMap.set(proj.projectId, proj);
+    return Array.from(projMap.values()).filter((p) => p.planStatus === "submitted");
+  })() : [];
+
   return (
     <div className="ges-card overflow-hidden">
-      <div className="px-5 py-3 bg-blue-50 border-b border-blue-100">
-        <h3 className="font-bold text-blue-900">{dept.name}</h3>
-        <p className="text-xs text-gray-500 mt-0.5">{dept.employees.length} คน</p>
+      <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="font-bold text-blue-900">{dept.name}</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{dept.employees.length} คน</p>
+        </div>
+        {pendingProjects.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {pendingProjects.map((proj) => (
+              <div key={proj.projectId} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                <span className="text-xs font-mono text-blue-600 font-semibold">{proj.projectNumber}</span>
+                <span className="text-xs text-gray-600 max-w-[120px] truncate">{proj.projectName}</span>
+                <button
+                  onClick={() => approveProject(proj.projectId)}
+                  disabled={acting === `${proj.projectId}:approve` || acting === proj.projectId}
+                  className="text-xs bg-green-600 text-white px-2.5 py-0.5 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap ml-1">
+                  {acting === proj.projectId || acting === `${proj.projectId}:approve` ? "…" : "✓ Approve"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto">

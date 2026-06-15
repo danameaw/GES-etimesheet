@@ -180,10 +180,10 @@ export async function PATCH(req: NextRequest) {
     if (!["pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    await prisma.project.update({ where: { id: projectId }, data: { planStatus: "draft" } });
-    await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
-    await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
-    return NextResponse.json({ success: true, planStatus: "draft" });
+    await prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } });
+    await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
+    await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
+    return NextResponse.json({ success: true, planStatus: "submitted" });
   }
 
   // PD approves revision request (revision_requested → draft — PM can now edit)

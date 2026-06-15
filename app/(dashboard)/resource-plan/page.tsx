@@ -199,7 +199,7 @@ export default function ResourcePlanPage() {
 
   async function cancelRevision() {
     if (!selectedProject) return;
-    if (!confirm("ถอนคำขอแก้ไข? แผนจะกลับเป็น Draft และสามารถแก้ไขได้ทันที")) return;
+    if (!confirm("ถอนคำขอแก้ไข? แผนจะกลับไปสถานะ 'รอ Management อนุมัติ'")) return;
     setSaving("cancel_revision");
     await fetch("/api/resource-plan-monthly", {
       method: "PATCH", headers: { "Content-Type": "application/json" },

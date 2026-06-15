@@ -31,6 +31,7 @@ export const authOptions: NextAuthOptions = {
           role: employee.role,
           department: employee.department,
           position: employee.position,
+          managedDept: employee.managedDept,
         };
       },
     }),
@@ -43,6 +44,7 @@ export const authOptions: NextAuthOptions = {
         token.role = (user as any).role;
         token.department = (user as any).department;
         token.position = (user as any).position;
+        token.managedDept = (user as any).managedDept;
       }
       return token;
     },
@@ -53,6 +55,7 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).role = token.role;
         (session.user as any).department = token.department;
         (session.user as any).position = token.position;
+        (session.user as any).managedDept = token.managedDept;
       }
       return session;
     },
