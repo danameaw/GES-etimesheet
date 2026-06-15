@@ -150,8 +150,45 @@ export async function GET(req: NextRequest) {
         })),
     }));
 
-  // Fetch dept approval status for all projects in view
+  // Auto-backfill dept approval records for submitted/approved projects that don't have them yet
   const projectIds = Array.from(new Set(plans.map((p) => p.project.id)));
+  if (projectIds.length > 0) {
+    const existingApprovals = await prisma.resourcePlanDeptApproval.findMany({
+      where: { projectId: { in: projectIds } },
+      select: { projectId: true, department: true },
+    });
+    const existingSet = new Set(existingApprovals.map((a) => `${a.projectId}|${a.department}`));
+
+    // Group plans by project+dept to find missing approval records
+    const projDeptMap = new Map<string, { projectId: string; department: string; planStatus: string }>();
+    for (const p of plans) {
+      const proj = p.project as any;
+      if (["submitted", "revision_requested", "approved"].includes(proj.planStatus)) {
+        const key = `${proj.id}|${p.employee.department}`;
+        if (!existingSet.has(key)) {
+          projDeptMap.set(key, {
+            projectId: proj.id,
+            department: p.employee.department,
+            planStatus: proj.planStatus,
+          });
+        }
+      }
+    }
+
+    if (projDeptMap.size > 0) {
+      await prisma.$transaction(
+        Array.from(projDeptMap.values()).map(({ projectId: pid, department }) =>
+          prisma.resourcePlanDeptApproval.upsert({
+            where: { projectId_department: { projectId: pid, department } },
+            create: { projectId: pid, department, status: "pending" },
+            update: {},
+          })
+        )
+      );
+    }
+  }
+
+  // Fetch dept approval status for all projects in view
   const deptApprovals = projectIds.length > 0
     ? await prisma.resourcePlanDeptApproval.findMany({
         where: { projectId: { in: projectIds } },

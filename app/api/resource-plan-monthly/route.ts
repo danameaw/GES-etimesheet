@@ -86,6 +86,29 @@ export async function GET(req: NextRequest) {
     return { department: dept, year: Number(y), month: Number(m), actualHrs: hrs };
   });
 
+  // Auto-backfill dept approval records for this project if missing
+  const proj = projects.find((p) => p.id === projectId);
+  if (proj && ["submitted", "revision_requested", "approved"].includes((proj as any).planStatus)) {
+    const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
+      where: { projectId },
+      include: { employee: { select: { department: true } } },
+    });
+    const depts = Array.from(new Set(empPlans.map((p) => p.employee.department)));
+    const existing = await prisma.resourcePlanDeptApproval.findMany({
+      where: { projectId },
+      select: { department: true },
+    });
+    const existingDepts = new Set(existing.map((e) => e.department));
+    const missing = depts.filter((d) => !existingDepts.has(d));
+    if (missing.length > 0) {
+      await prisma.$transaction(
+        missing.map((department) =>
+          prisma.resourcePlanDeptApproval.create({ data: { projectId, department, status: "pending" } })
+        )
+      );
+    }
+  }
+
   // Fetch dept approval status for this project
   const deptApprovals = await prisma.resourcePlanDeptApproval.findMany({
     where: { projectId },
