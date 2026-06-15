@@ -47,14 +47,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const year = Number(searchParams.get("year") ?? new Date().getFullYear());
 
-  // ges_management: only own department — lookup by id or employeeId for robustness
+  // ges_management: only own department — use managedDept, fallback to department
   let myDept: string | null = null;
   if (role === "ges_management" || role === "ges_pd") {
     const me = await prisma.employee.findFirst({
       where: { OR: [{ id: empDbId }, { employeeId }] },
-      select: { managedDept: true },
+      select: { managedDept: true, department: true },
     });
-    myDept = me?.managedDept || null;
+    myDept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
   }
 
   // Fetch all plans for this year
@@ -150,5 +150,19 @@ export async function GET(req: NextRequest) {
         })),
     }));
 
-  return NextResponse.json({ year, months: monthMeta, departments });
+  // Fetch dept approval status for all projects in view
+  const projectIds = Array.from(new Set(plans.map((p) => p.project.id)));
+  const deptApprovals = projectIds.length > 0
+    ? await prisma.resourcePlanDeptApproval.findMany({
+        where: { projectId: { in: projectIds } },
+        select: { projectId: true, department: true, status: true },
+      })
+    : [];
+  const deptApprovalMap: Record<string, { department: string; status: string }[]> = {};
+  for (const da of deptApprovals) {
+    if (!deptApprovalMap[da.projectId]) deptApprovalMap[da.projectId] = [];
+    deptApprovalMap[da.projectId].push({ department: da.department, status: da.status });
+  }
+
+  return NextResponse.json({ year, months: monthMeta, departments, deptApprovalMap });
 }

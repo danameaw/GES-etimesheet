@@ -25,6 +25,7 @@ model Employee {
   directedProjects Project[]      @relation("ProjectDirector")
   resourcePlans    ResourcePlan[]
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
+  deptApprovalsGiven ResourcePlanDeptApproval[] @relation("DeptApprovalApprover")
 }
 
 model Project {
@@ -45,6 +46,7 @@ model Project {
   resourcePlans        ResourcePlan[]
   resourcePlansMonthly ResourcePlanMonthly[]
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
+  deptApprovals        ResourcePlanDeptApproval[]
 }
 
 model TaskCode {
@@ -159,6 +161,23 @@ model StandardRate {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Per-department approval tracking for resource plans
+model ResourcePlanDeptApproval {
+  id           String    @id @default(cuid())
+  projectId    String
+  department   String
+  status       String    @default("pending") // pending | approved
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  project    Project   @relation(fields: [projectId], references: [id])
+  approvedBy Employee? @relation("DeptApprovalApprover", fields: [approvedById], references: [id])
+
+  @@unique([projectId, department])
 }
 
 model AuditLog {

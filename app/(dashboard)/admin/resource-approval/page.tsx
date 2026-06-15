@@ -16,7 +16,11 @@ interface EmpData {
   projects: ProjectPlan[];
 }
 interface DeptData     { name: string; employees: EmpData[]; }
-interface WorkloadData { year: number; months: MonthMeta[]; departments: DeptData[]; }
+interface DeptApprovalEntry { department: string; status: string; }
+interface WorkloadData {
+  year: number; months: MonthMeta[]; departments: DeptData[];
+  deptApprovalMap: Record<string, DeptApprovalEntry[]>;
+}
 
 export default function ResourceApprovalPage() {
   const { data: session } = useSession();
@@ -151,6 +155,7 @@ export default function ResourceApprovalPage() {
               acting={acting}
               approveProject={approveProject}
               planAction={planAction}
+              deptApprovalMap={data.deptApprovalMap || {}}
             />
           ))}
         </div>
@@ -160,11 +165,12 @@ export default function ResourceApprovalPage() {
 }
 
 // ── Department Table (Workload view + Approve Plan view) ─────────────────────
-function DeptTable({ dept, months, canApprove, acting, approveProject, planAction }: {
+function DeptTable({ dept, months, canApprove, acting, approveProject, planAction, deptApprovalMap }: {
   dept: DeptData; months: MonthMeta[];
   canApprove: boolean; acting: string | null;
   approveProject: (id: string) => void;
   planAction: (id: string, action: string) => void;
+  deptApprovalMap: Record<string, DeptApprovalEntry[]>;
 }) {
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
 
@@ -201,14 +207,38 @@ function DeptTable({ dept, months, canApprove, acting, approveProject, planActio
                   <span className="text-xs font-mono text-blue-600 font-semibold">{proj.projectNumber}</span>
                   <span className="text-xs text-gray-700 max-w-[150px] truncate">{proj.projectName}</span>
                   <PlanStatusBadge status={proj.planStatus} />
-                  {proj.planStatus === "submitted" && (
-                    <button
-                      onClick={() => approveProject(proj.projectId)}
-                      disabled={acting === `${proj.projectId}:approve`}
-                      className="text-xs bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap">
-                      {acting === `${proj.projectId}:approve` ? "…" : "✓ Approve"}
-                    </button>
-                  )}
+                  {proj.planStatus === "submitted" && (() => {
+                    const allDeptApprovals = deptApprovalMap[proj.projectId] || [];
+                    const myDeptApproval = allDeptApprovals.find((da) => da.department === dept.name);
+                    const otherApprovals = allDeptApprovals.filter((da) => da.department !== dept.name);
+                    const alreadyApproved = myDeptApproval?.status === "approved";
+                    return (
+                      <div className="flex flex-col gap-1.5">
+                        {otherApprovals.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {otherApprovals.map((da) => (
+                              <span key={da.department} className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                                da.status === "approved"
+                                  ? "bg-green-50 border-green-200 text-green-700"
+                                  : "bg-amber-50 border-amber-200 text-amber-700"
+                              }`}>
+                                {da.status === "approved" ? "✓" : "⏳"} {da.department}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {alreadyApproved
+                          ? <span className="text-xs text-green-600 font-semibold">✓ {dept.name} อนุมัติแล้ว</span>
+                          : <button
+                              onClick={() => planAction(proj.projectId, "dept_approve")}
+                              disabled={acting === `${proj.projectId}:dept_approve`}
+                              className="text-xs bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap">
+                              {acting === `${proj.projectId}:dept_approve` ? "…" : `✓ Approve (${dept.name})`}
+                            </button>
+                        }
+                      </div>
+                    );
+                  })()}
                   {proj.planStatus === "revision_requested" && (
                     <>
                       <button

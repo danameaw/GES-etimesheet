@@ -86,7 +86,14 @@ export async function GET(req: NextRequest) {
     return { department: dept, year: Number(y), month: Number(m), actualHrs: hrs };
   });
 
-  return NextResponse.json({ projects, departments, plans, actuals });
+  // Fetch dept approval status for this project
+  const deptApprovals = await prisma.resourcePlanDeptApproval.findMany({
+    where: { projectId },
+    orderBy: { department: "asc" },
+    select: { department: true, status: true },
+  });
+
+  return NextResponse.json({ projects, departments, plans, actuals, deptApprovals });
 }
 
 export async function POST(req: NextRequest) {
@@ -128,17 +135,33 @@ export async function PATCH(req: NextRequest) {
   if (!["pd", "ges_pd", "ges_management", "admin", "md"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { action, projectId } = await req.json();
+  const body = await req.json();
+  const { action, projectId } = body;
   if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
 
-  // PM submits plan
+  // PM submits plan — auto-create dept approval records
   if (action === "submit") {
     if (!["pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    await prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } });
-    await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
-    await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } });
+    const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
+      where: { projectId },
+      include: { employee: { select: { department: true } } },
+    });
+    const depts = Array.from(new Set(empPlans.map((p) => p.employee.department)));
+
+    await prisma.$transaction([
+      prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } }),
+      prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } }),
+      prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } }),
+      ...depts.map((dept) =>
+        prisma.resourcePlanDeptApproval.upsert({
+          where: { projectId_department: { projectId, department: dept } },
+          create: { projectId, department: dept, status: "pending" },
+          update: { status: "pending", approvedById: null, approvedAt: null },
+        })
+      ),
+    ]);
     return NextResponse.json({ success: true, planStatus: "submitted" });
   }
 
@@ -153,22 +176,68 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: true, planStatus: "revision_requested" });
   }
 
-  // PD approves plan (submitted → approved)
+  // Per-dept approve: GES Management approves only their own dept
+  if (action === "dept_approve") {
+    if (!["ges_management", "ges_pd", "admin", "md"].includes(role))
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const empDbId = (session.user as any).id;
+    const employeeId = (session.user as any).employeeId;
+    let dept: string | null = null;
+    if (["ges_management", "ges_pd"].includes(role)) {
+      const me = await prisma.employee.findFirst({
+        where: { OR: [{ id: empDbId }, { employeeId }] },
+        select: { managedDept: true, department: true },
+      });
+      dept = (me?.managedDept && me.managedDept.trim()) ? me.managedDept : me?.department ?? null;
+    } else {
+      dept = body.department ?? null;
+    }
+    if (!dept) return NextResponse.json({ error: "Cannot determine department" }, { status: 400 });
+
+    await prisma.resourcePlanDeptApproval.upsert({
+      where: { projectId_department: { projectId, department: dept } },
+      create: { projectId, department: dept, status: "approved", approvedById: empDbId, approvedAt: new Date() },
+      update: { status: "approved", approvedById: empDbId, approvedAt: new Date() },
+    });
+
+    // Check if ALL depts for this project are approved
+    const allApprovals = await prisma.resourcePlanDeptApproval.findMany({ where: { projectId } });
+    const allApproved = allApprovals.length > 0 && allApprovals.every((a) => a.status === "approved");
+    if (allApproved) {
+      await prisma.project.update({ where: { id: projectId }, data: { planStatus: "approved" } });
+      await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "approved" } });
+      await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "approved" } });
+      return NextResponse.json({ success: true, planStatus: "approved", allApproved: true });
+    }
+    return NextResponse.json({ success: true, planStatus: "submitted", deptApproved: dept });
+  }
+
+  // Admin/MD full override approve
   if (action === "approve") {
     if (!["ges_management", "admin", "md"].includes(role))
-      return NextResponse.json({ error: "Only PD can approve" }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    const empDbId = (session.user as any).id;
+    await prisma.resourcePlanDeptApproval.updateMany({
+      where: { projectId },
+      data: { status: "approved", approvedById: empDbId, approvedAt: new Date() },
+    });
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "approved" } });
     await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "approved" } });
     await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "approved" } });
     return NextResponse.json({ success: true, planStatus: "approved" });
   }
 
-  // PD rejects plan (submitted → draft — send back to PM to revise)
+  // Reject plan — reset to draft
   if (action === "reject") {
     if (!["ges_management", "admin", "md"].includes(role))
-      return NextResponse.json({ error: "Only PD can reject" }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    await prisma.resourcePlanDeptApproval.updateMany({
+      where: { projectId },
+      data: { status: "pending", approvedById: null, approvedAt: null },
+    });
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "draft" } });
     await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
     await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
@@ -186,11 +255,15 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: true, planStatus: "submitted" });
   }
 
-  // PD approves revision request (revision_requested → draft — PM can now edit)
+  // Management approves revision request → reset ALL dept approvals, return to draft
   if (action === "approve_revision") {
     if (!["ges_management", "admin", "md"].includes(role))
-      return NextResponse.json({ error: "Only PD can approve revision" }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    await prisma.resourcePlanDeptApproval.updateMany({
+      where: { projectId },
+      data: { status: "pending", approvedById: null, approvedAt: null },
+    });
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "draft" } });
     await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
     await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });

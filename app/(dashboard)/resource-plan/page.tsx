@@ -65,6 +65,9 @@ export default function ResourcePlanPage() {
   const [importing, startImport]     = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Dept approval status
+  const [deptApprovals, setDeptApprovals] = useState<{ department: string; status: string }[]>([]);
+
   // Standard hours per month (after holidays) — key: "year-month"
   const [stdHours, setStdHours] = useState<Record<string, number>>({});
 
@@ -78,6 +81,7 @@ export default function ResourcePlanPage() {
     setDepartments(d.departments || []);
     setPlans(d.plans || []);
     setActuals(d.actuals || []);
+    setDeptApprovals(d.deptApprovals || []);
     setLoading(false);
   }, []);
 
@@ -355,6 +359,19 @@ export default function ResourcePlanPage() {
                       <PlanStatusBadge status={planStatus} />
                     </div>
                     <h2 className="text-lg font-bold text-gray-900 mt-0.5">{selectedProj.projectName}</h2>
+                    {deptApprovals.length > 0 && planStatus !== "draft" && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {deptApprovals.map((da) => (
+                          <span key={da.department} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium border ${
+                            da.status === "approved"
+                              ? "bg-green-50 border-green-200 text-green-700"
+                              : "bg-amber-50 border-amber-200 text-amber-700"
+                          }`}>
+                            {da.status === "approved" ? "✓" : "⏳"} {da.department}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-xs text-gray-500 mt-0.5">
                       {selectedProj.startDate ? new Date(selectedProj.startDate).toLocaleDateString("th-TH") : "–"}
                       {" → "}
