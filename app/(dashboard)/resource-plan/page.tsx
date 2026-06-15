@@ -187,11 +187,23 @@ export default function ResourcePlanPage() {
 
   async function requestRevision() {
     if (!selectedProject) return;
-    if (!confirm("ส่งคำขอแก้ไขแผนไปให้ PD อนุมัติก่อน?")) return;
+    if (!confirm("ส่งคำขอแก้ไขแผนไปให้ Management อนุมัติก่อน?")) return;
     setSaving("revision");
     await fetch("/api/resource-plan-monthly", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "revision_request", projectId: selectedProject }),
+    });
+    setSaving(null);
+    load(selectedProject);
+  }
+
+  async function cancelRevision() {
+    if (!selectedProject) return;
+    if (!confirm("ถอนคำขอแก้ไข? แผนจะกลับเป็น Draft และสามารถแก้ไขได้ทันที")) return;
+    setSaving("cancel_revision");
+    await fetch("/api/resource-plan-monthly", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "cancel_revision", projectId: selectedProject }),
     });
     setSaving(null);
     load(selectedProject);
@@ -396,11 +408,13 @@ export default function ResourcePlanPage() {
                         </button>
                       )}
 
-                      {/* Revision pending indicator */}
+                      {/* Cancel revision request — when revision_requested */}
                       {planStatus === "revision_requested" && (
-                        <span className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 bg-amber-50 whitespace-nowrap">
-                          ⏳ รอ PD อนุมัติการแก้ไข
-                        </span>
+                        <button onClick={cancelRevision}
+                          disabled={saving === "cancel_revision"}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-700 bg-red-50 hover:bg-red-100 whitespace-nowrap font-medium disabled:opacity-50">
+                          {saving === "cancel_revision" ? "กำลังถอน…" : "↩ ถอนคำขอแก้ไข"}
+                        </button>
                       )}
                     </div>
                   </div>
@@ -418,14 +432,14 @@ export default function ResourcePlanPage() {
                   <span>
                     {planStatus === "approved"
                       ? "แผนได้รับการอนุมัติแล้ว — ไม่สามารถแก้ไขได้ กด \"Request for Revise Plan\" เพื่อขอแก้ไข"
-                      : "แผนถูกส่งแล้ว — รอ PD อนุมัติ หรือกด \"Request for Revise Plan\" เพื่อขอแก้ไข"}
+                      : "แผนถูกส่งแล้ว — รอ GES Management / MD อนุมัติ หรือกด \"Request for Revise Plan\" เพื่อขอแก้ไข"}
                   </span>
                 </div>
               )}
               {planStatus === "revision_requested" && (
                 <div className="px-4 py-3 rounded-lg text-sm flex items-center gap-2 bg-blue-50 border border-blue-200 text-blue-800">
                   <span>⏳</span>
-                  <span>อยู่ระหว่างรอ PD อนุมัติคำขอแก้ไข — ยังไม่สามารถแก้ไขแผนได้ในขณะนี้</span>
+                  <span>อยู่ระหว่างรอ GES Management / MD อนุมัติคำขอแก้ไข — ยังไม่สามารถแก้ไขแผนได้ในขณะนี้</span>
                 </div>
               )}
 
@@ -708,8 +722,8 @@ export default function ResourcePlanPage() {
 function PlanStatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     draft:              { label: "✏️ Draft",              cls: "bg-gray-100 text-gray-600" },
-    submitted:          { label: "📤 รอ PD อนุมัติ",       cls: "bg-amber-100 text-amber-800" },
-    revision_requested: { label: "🔄 รอ PD อนุมัติการแก้ไข", cls: "bg-blue-100 text-blue-800" },
+    submitted:          { label: "📤 รอ Management อนุมัติ",       cls: "bg-amber-100 text-amber-800" },
+    revision_requested: { label: "🔄 รอ Management อนุมัติการแก้ไข", cls: "bg-blue-100 text-blue-800" },
     approved:           { label: "✓ Approved by PD",     cls: "bg-green-100 text-green-800" },
   };
   const s = map[status] ?? map.draft;

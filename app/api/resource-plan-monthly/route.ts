@@ -175,6 +175,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: true, planStatus: "draft" });
   }
 
+  // PD cancels own revision request (revision_requested → submitted)
+  if (action === "cancel_revision") {
+    if (!["pd", "admin", "md"].includes(role))
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    await prisma.project.update({ where: { id: projectId }, data: { planStatus: "draft" } });
+    await prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
+    await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "draft" } });
+    return NextResponse.json({ success: true, planStatus: "draft" });
+  }
+
   // PD approves revision request (revision_requested → draft — PM can now edit)
   if (action === "approve_revision") {
     if (!["ges_management", "admin", "md"].includes(role))
