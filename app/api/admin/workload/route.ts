@@ -37,8 +37,9 @@ const STD_HOURS_PER_MONTH = 176;
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const role    = (session.user as any).role;
-  const empDbId = (session.user as any).id;
+  const role       = (session.user as any).role;
+  const empDbId    = (session.user as any).id;
+  const employeeId = (session.user as any).employeeId;
 
   if (!["ges_management", "ges_pd", "admin", "md", "pd"].includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -46,10 +47,13 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const year = Number(searchParams.get("year") ?? new Date().getFullYear());
 
-  // ges_management: only own department
+  // ges_management: only own department — lookup by id or employeeId for robustness
   let myDept: string | null = null;
   if (role === "ges_management" || role === "ges_pd") {
-    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true } });
+    const me = await prisma.employee.findFirst({
+      where: { OR: [{ id: empDbId }, { employeeId }] },
+      select: { managedDept: true },
+    });
     myDept = me?.managedDept || null;
   }
 

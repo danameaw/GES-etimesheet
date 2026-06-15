@@ -134,17 +134,23 @@ export default function ResourceApprovalPage() {
           <p className="text-4xl mb-3">📋</p>
           <p className="font-medium">ไม่มีข้อมูล Plan ในปี {year}</p>
         </div>
+      ) : displayDepts(data.departments).length === 0 ? (
+        <div className="ges-card p-12 text-center text-gray-400">
+          <p className="text-4xl mb-3">📋</p>
+          <p className="font-medium">ไม่มีข้อมูล Plan สำหรับ Department ที่คุณดูแล</p>
+          <p className="text-xs mt-1">กรุณา logout แล้ว login ใหม่หากยังไม่เห็นข้อมูล</p>
+        </div>
       ) : (
         <div className="space-y-6">
-          {/* GES Management: show all their dept plans with approve */}
           {displayDepts(data.departments).map((dept) => (
             <DeptTable
               key={dept.name}
               dept={dept}
               months={data.months}
-              canApprove={!isMD}   // GES Management can approve, MD in workload tab = view only
+              canApprove={!isMD}
               acting={acting}
               approveProject={approveProject}
+              planAction={planAction}
             />
           ))}
         </div>
@@ -154,48 +160,76 @@ export default function ResourceApprovalPage() {
 }
 
 // ── Department Table (Workload view + Approve Plan view) ─────────────────────
-function DeptTable({ dept, months, canApprove, acting, approveProject }: {
+function DeptTable({ dept, months, canApprove, acting, approveProject, planAction }: {
   dept: DeptData; months: MonthMeta[];
   canApprove: boolean; acting: string | null;
   approveProject: (id: string) => void;
+  planAction: (id: string, action: string) => void;
 }) {
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
 
   const getEmpMonthTotal = (emp: EmpData, month: number) =>
     emp.projects.reduce((s, p) => s + (p.monthPlans[month] ?? 0), 0);
 
-  // Unique projects in this dept that are submitted (need approval)
-  const pendingProjects = canApprove ? (() => {
+  // Unique projects in this dept that need action
+  const actionableProjects = canApprove ? (() => {
     const projMap = new Map<string, { projectId: string; projectNumber: string; projectName: string; planStatus: string }>();
     for (const emp of dept.employees)
       for (const proj of emp.projects)
         if (!projMap.has(proj.projectId)) projMap.set(proj.projectId, proj);
-    return Array.from(projMap.values()).filter((p) => p.planStatus === "submitted");
+    return Array.from(projMap.values()).filter(
+      (p) => p.planStatus === "submitted" || p.planStatus === "revision_requested"
+    );
   })() : [];
 
   return (
     <div className="ges-card overflow-hidden">
-      <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="font-bold text-blue-900">{dept.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">{dept.employees.length} คน</p>
-        </div>
-        {pendingProjects.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {pendingProjects.map((proj) => (
-              <div key={proj.projectId} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
-                <span className="text-xs font-mono text-blue-600 font-semibold">{proj.projectNumber}</span>
-                <span className="text-xs text-gray-600 max-w-[120px] truncate">{proj.projectName}</span>
-                <button
-                  onClick={() => approveProject(proj.projectId)}
-                  disabled={acting === `${proj.projectId}:approve` || acting === proj.projectId}
-                  className="text-xs bg-green-600 text-white px-2.5 py-0.5 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap ml-1">
-                  {acting === proj.projectId || acting === `${proj.projectId}:approve` ? "…" : "✓ Approve"}
-                </button>
-              </div>
-            ))}
+      <div className="px-5 py-3 bg-blue-50 border-b border-blue-100">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="font-bold text-blue-900">{dept.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{dept.employees.length} คน</p>
           </div>
-        )}
+          {actionableProjects.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {actionableProjects.map((proj) => (
+                <div key={proj.projectId} className={`flex items-center gap-2 rounded-lg px-3 py-2 border ${
+                  proj.planStatus === "revision_requested"
+                    ? "bg-blue-50 border-blue-200"
+                    : "bg-amber-50 border-amber-200"
+                }`}>
+                  <span className="text-xs font-mono text-blue-600 font-semibold">{proj.projectNumber}</span>
+                  <span className="text-xs text-gray-700 max-w-[150px] truncate">{proj.projectName}</span>
+                  <PlanStatusBadge status={proj.planStatus} />
+                  {proj.planStatus === "submitted" && (
+                    <button
+                      onClick={() => approveProject(proj.projectId)}
+                      disabled={acting === `${proj.projectId}:approve`}
+                      className="text-xs bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap">
+                      {acting === `${proj.projectId}:approve` ? "…" : "✓ Approve"}
+                    </button>
+                  )}
+                  {proj.planStatus === "revision_requested" && (
+                    <>
+                      <button
+                        onClick={() => planAction(proj.projectId, "approve_revision")}
+                        disabled={!!acting}
+                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium whitespace-nowrap">
+                        {acting === `${proj.projectId}:approve_revision` ? "…" : "✓ ยินยอมให้แก้ไข"}
+                      </button>
+                      <button
+                        onClick={() => planAction(proj.projectId, "reject_revision")}
+                        disabled={!!acting}
+                        className="text-xs bg-red-500 text-white px-3 py-1 rounded-md hover:bg-red-600 disabled:opacity-50 font-medium whitespace-nowrap">
+                        {acting === `${proj.projectId}:reject_revision` ? "…" : "✗ ไม่อนุญาต"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
