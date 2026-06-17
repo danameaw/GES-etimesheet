@@ -69,6 +69,18 @@ export default function TimesheetPage() {
   const [saving, setSaving]           = useState(false);
   const [message, setMessage]         = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
 
+  // Favorites state
+  interface Favorite {
+    id: string;
+    project: { id: string; projectNumber: string; projectName: string };
+    taskCode: { id: string; code: string; name: string; category: string };
+  }
+  const [favorites, setFavorites]       = useState<Favorite[]>([]);
+  const [favLoading, setFavLoading]     = useState(false);
+  const [favAddProjectId, setFavAddProjectId] = useState("");
+  const [favAddTaskId, setFavAddTaskId]       = useState("");
+  const [favAdding, setFavAdding]             = useState(false);
+
   const weekEnd = new Date(currentWeek);
   weekEnd.setDate(weekEnd.getDate() + 6);
 
@@ -137,6 +149,45 @@ export default function TimesheetPage() {
   }, [currentWeek]);
 
   useEffect(() => { loadTimesheet(); }, [loadTimesheet]);
+
+  // Load favorites once on mount
+  useEffect(() => {
+    setFavLoading(true);
+    fetch("/api/timesheet-favorites")
+      .then((r) => r.json())
+      .then((d) => setFavorites(d.favorites || []))
+      .finally(() => setFavLoading(false));
+  }, []);
+
+  function addFavoriteRow(fav: Favorite) {
+    const task = taskCodes.find((t) => t.id === fav.taskCode.id);
+    const projectId = (task && OH_CATEGORIES.has(task.category) && ohProject)
+      ? ohProject.id
+      : fav.project.id;
+    setRows((prev) => [...prev, { ...newRow(), projectId, taskCodeId: fav.taskCode.id }]);
+  }
+
+  async function saveFavorite() {
+    if (!favAddProjectId || !favAddTaskId) return;
+    setFavAdding(true);
+    const res = await fetch("/api/timesheet-favorites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: favAddProjectId, taskCodeId: favAddTaskId }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      setFavorites((prev) => [...prev, d.favorite]);
+      setFavAddProjectId("");
+      setFavAddTaskId("");
+    }
+    setFavAdding(false);
+  }
+
+  async function deleteFavorite(id: string) {
+    await fetch(`/api/timesheet-favorites?id=${id}`, { method: "DELETE" });
+    setFavorites((prev) => prev.filter((f) => f.id !== id));
+  }
 
   // Sum all logged hours per day (holidays are now informational only — hours still count)
   const totalByDay = DAYS.map((d) =>
@@ -224,6 +275,7 @@ export default function TimesheetPage() {
   const canEdit     = !isSubmitted && !isApproved;
 
   return (
+    <>
     <div>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -532,5 +584,87 @@ export default function TimesheetPage() {
         )}
       </div>
     </div>
+
+    {/* ── Favorites Section ── */}
+    <div className="ges-card mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-base font-semibold text-gray-700 flex items-center gap-2">
+          ★ Favorites
+          <span className="text-xs font-normal text-gray-400">กด Add เพื่อเพิ่มแถวในตาราง</span>
+        </h2>
+      </div>
+
+      {/* Saved favorites list */}
+      {favLoading ? (
+        <p className="text-sm text-gray-400">กำลังโหลด…</p>
+      ) : favorites.length === 0 ? (
+        <p className="text-sm text-gray-400 mb-3">ยังไม่มี Favorites — เพิ่มด้านล่างได้เลย</p>
+      ) : (
+        <div className="flex flex-col gap-1.5 mb-4">
+          {favorites.map((fav) => (
+            <div key={fav.id} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-medium text-blue-700">{fav.project.projectNumber}</span>
+                <span className="text-xs text-gray-500 mx-1">—</span>
+                <span className="text-xs text-gray-700 truncate">{fav.project.projectName.length > 35 ? fav.project.projectName.slice(0, 33) + "…" : fav.project.projectName}</span>
+                <span className="text-xs text-gray-400 ml-2">/ {fav.taskCode.code} {fav.taskCode.name}</span>
+              </div>
+              {canEdit && (
+                <button
+                  onClick={() => addFavoriteRow(fav)}
+                  className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 whitespace-nowrap"
+                >
+                  + Add
+                </button>
+              )}
+              <button
+                onClick={() => deleteFavorite(fav.id)}
+                className="text-red-400 hover:text-red-600 text-base leading-none ml-1"
+                title="ลบออกจาก Favorites"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add new favorite form */}
+      <div className="border-t border-gray-100 pt-3">
+        <p className="text-xs text-gray-500 mb-2 font-medium">เพิ่ม Favorite ใหม่</p>
+        <div className="flex flex-wrap gap-2 items-end">
+          <select
+            value={favAddProjectId}
+            onChange={(e) => setFavAddProjectId(e.target.value)}
+            className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white flex-1 min-w-[180px]"
+          >
+            <option value="">-- เลือก Project --</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.projectNumber} - {p.projectName.length > 35 ? p.projectName.slice(0, 33) + "…" : p.projectName}
+              </option>
+            ))}
+          </select>
+          <select
+            value={favAddTaskId}
+            onChange={(e) => setFavAddTaskId(e.target.value)}
+            className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white flex-1 min-w-[160px]"
+          >
+            <option value="">-- เลือก Task --</option>
+            {taskCodes.map((t) => (
+              <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={saveFavorite}
+            disabled={!favAddProjectId || !favAddTaskId || favAdding}
+            className="ges-btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
+          >
+            {favAdding ? "กำลังบันทึก…" : "บันทึก Favorite"}
+          </button>
+        </div>
+      </div>
+    </div>
+    </>
   );
 }

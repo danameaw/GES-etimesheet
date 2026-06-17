@@ -26,6 +26,7 @@ model Employee {
   resourcePlans    ResourcePlan[]
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
   deptApprovalsGiven ResourcePlanDeptApproval[] @relation("DeptApprovalApprover")
+  timesheetFavorites TimesheetFavorite[]
 }
 
 model Project {
@@ -47,6 +48,7 @@ model Project {
   resourcePlansMonthly ResourcePlanMonthly[]
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
   deptApprovals        ResourcePlanDeptApproval[]
+  timesheetFavorites   TimesheetFavorite[]
 }
 
 model TaskCode {
@@ -56,7 +58,8 @@ model TaskCode {
   category  String
   isActive  Boolean  @default(true)
 
-  entries TimesheetEntry[]
+  entries            TimesheetEntry[]
+  timesheetFavorites TimesheetFavorite[]
 }
 
 model Timesheet {
@@ -188,4 +191,20 @@ model AuditLog {
   timestamp  DateTime @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id])
+}
+
+
+model TimesheetFavorite {
+  id          String   @id @default(cuid())
+  employeeId  String
+  projectId   String
+  taskCodeId  String
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  project  Project  @relation(fields: [projectId], references: [id])
+  taskCode TaskCode @relation(fields: [taskCodeId], references: [id])
+
+  @@unique([employeeId, projectId, taskCodeId])
 }
