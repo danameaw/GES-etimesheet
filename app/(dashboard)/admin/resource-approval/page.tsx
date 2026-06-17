@@ -553,9 +553,9 @@ function ProjectOverview() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res  = await fetch("/api/resource-plan-monthly?forApproval=1");
+    const res  = await fetch("/api/resource-plan-monthly?forApproval=1&allProjects=1");
     const data = await res.json();
-    const projects: any[] = (data.projects || []).filter((p: any) => p.planStatus !== "draft");
+    const projects: any[] = data.projects || [];
 
     const results = await Promise.all(
       projects.map(async (proj) => {
@@ -588,7 +588,7 @@ function ProjectOverview() {
       })
     );
 
-    const filled = results.filter((g) => g.employees.length > 0);
+    const filled = results;
     setGroups(filled);
 
     // Collect distinct years from all data

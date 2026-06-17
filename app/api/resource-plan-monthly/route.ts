@@ -22,21 +22,26 @@ export async function GET(req: NextRequest) {
 
   // forApproval=1 → Approval page context: PD/admin see ALL non-draft projects
   // (bypasses pdId filter so revision_requested projects always surface)
-  const forApproval = searchParams.get("forApproval") === "1";
+  const forApproval  = searchParams.get("forApproval") === "1";
+  // allProjects=1 → Overview page: admin/md see ALL active projects regardless of plan status
+  const allProjects  = searchParams.get("allProjects") === "1";
 
   // Build project filter:
   // pd normal      → projects where pdId = empDbId
   // pd forApproval → all active non-draft projects
   // ges_management → same as pd
-  // admin / md     → all active projects (forApproval: non-draft only)
+  // admin / md     → all active projects (forApproval: non-draft only; allProjects: all)
   let projectWhere: any = { isActive: true };
   if (role === "pd" || role === "ges_pd" || role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
       : { pdId: empDbId, isActive: true };
   }
-  if ((role === "admin" || role === "md") && forApproval) {
+  if ((role === "admin" || role === "md") && forApproval && !allProjects) {
     projectWhere = { isActive: true, planStatus: { not: "draft" } };
+  }
+  if ((role === "admin" || role === "md") && allProjects) {
+    projectWhere = { isActive: true };
   }
 
   const projects = await prisma.project.findMany({
