@@ -587,11 +587,9 @@ export default function TimesheetPage() {
 
     {/* ── Favorites Section ── */}
     <div className="ges-card mt-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-base font-semibold text-gray-700 flex items-center gap-2">
-          ★ Favorites
-          <span className="text-xs font-normal text-gray-400">กด Add เพื่อเพิ่มแถวในตาราง</span>
-        </h2>
+      <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+        <p className="text-xs font-semibold text-amber-800">★ Favorites — Quick Add รายการที่ใช้บ่อย</p>
+        <p className="text-xs text-amber-600 mt-0.5">กด <span className="font-semibold">+ Add</span> เพื่อเพิ่มแถวในตาราง Timesheet ของสัปดาห์นี้</p>
       </div>
 
       {/* Saved favorites list */}
@@ -631,7 +629,7 @@ export default function TimesheetPage() {
 
       {/* Add new favorite form */}
       <div className="border-t border-gray-100 pt-3">
-        <p className="text-xs text-gray-500 mb-2 font-medium">เพิ่ม Favorite ใหม่</p>
+        <p className="text-xs font-semibold text-gray-600 mb-2">เพิ่ม Favorite ใหม่</p>
         <div className="flex flex-wrap gap-2 items-end">
           <select
             value={favAddProjectId}
