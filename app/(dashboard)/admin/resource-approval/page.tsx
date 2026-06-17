@@ -542,11 +542,14 @@ const MONTH_NAMES_TH_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.",
 
 // ── MD Overview: ภาพรวมรายบุคคลตามโครงการ (view-only, Plan vs Actual) ────────
 function ProjectOverview() {
+  const currentYear = new Date().getFullYear();
   const [groups,        setGroups]        = useState<any[]>([]);
   const [loading,       setLoading]       = useState(true);
   const [expandedId,    setExpandedId]    = useState<string | null>(null);
+  const [availYears,    setAvailYears]    = useState<number[]>([]);
+  const [selectedYear,  setSelectedYear]  = useState<number>(currentYear);
   const [availMonths,   setAvailMonths]   = useState<number[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // null = รวม
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // null = รวม (ทั้งปี)
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -561,7 +564,7 @@ function ProjectOverview() {
         const plans: any[]   = empData.plans   || [];
         const actuals: any[] = empData.actuals || [];
 
-        // Store per-employee monthly breakdown (not pre-summed)
+        // Store per-employee monthly breakdown keyed by "year-month"
         type EmpEntry = { employee: any; monthPlanned: Record<string, number>; monthActual: Record<string, number> };
         const empMap = new Map<string, EmpEntry>();
         for (const p of plans) {
@@ -588,27 +591,50 @@ function ProjectOverview() {
     const filled = results.filter((g) => g.employees.length > 0);
     setGroups(filled);
 
-    // Collect all distinct months across all projects
-    const monthSet = new Set<number>();
+    // Collect distinct years from all data
+    const yearSet = new Set<number>();
     for (const { employees } of filled)
       for (const emp of employees) {
-        for (const key of Object.keys(emp.monthPlanned)) monthSet.add(Number(key.split("-")[1]));
-        for (const key of Object.keys(emp.monthActual))  monthSet.add(Number(key.split("-")[1]));
+        for (const key of Object.keys(emp.monthPlanned)) yearSet.add(Number(key.split("-")[0]));
+        for (const key of Object.keys(emp.monthActual))  yearSet.add(Number(key.split("-")[0]));
       }
-    setAvailMonths(Array.from(monthSet).sort((a, b) => a - b));
+    const years = Array.from(yearSet).sort((a, b) => a - b);
+    setAvailYears(years);
+    // Default to current year if available, else first year
+    setSelectedYear((y) => years.includes(y) ? y : (years.includes(currentYear) ? currentYear : years[0] ?? currentYear));
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Sum hours for a given month filter (null = all months)
-  function calcTotals(emp: any, monthFilter: number | null) {
+  // Recompute available months when selected year changes
+  useEffect(() => {
+    const monthSet = new Set<number>();
+    for (const { employees } of groups)
+      for (const emp of employees) {
+        for (const key of Object.keys(emp.monthPlanned)) {
+          const [y, m] = key.split("-").map(Number);
+          if (y === selectedYear) monthSet.add(m);
+        }
+        for (const key of Object.keys(emp.monthActual)) {
+          const [y, m] = key.split("-").map(Number);
+          if (y === selectedYear) monthSet.add(m);
+        }
+      }
+    setAvailMonths(Array.from(monthSet).sort((a, b) => a - b));
+    setSelectedMonth(null); // reset to "รวม" when year changes
+  }, [selectedYear, groups]);
+
+  // Sum hours filtered by selected year + optional month
+  function calcTotals(emp: any, year: number, monthFilter: number | null) {
     let planned = 0, actual = 0;
     for (const [key, h] of Object.entries(emp.monthPlanned as Record<string, number>)) {
-      if (monthFilter === null || Number(key.split("-")[1]) === monthFilter) planned += h as number;
+      const [y, m] = key.split("-").map(Number);
+      if (y === year && (monthFilter === null || m === monthFilter)) planned += h as number;
     }
     for (const [key, h] of Object.entries(emp.monthActual as Record<string, number>)) {
-      if (monthFilter === null || Number(key.split("-")[1]) === monthFilter) actual += h as number;
+      const [y, m] = key.split("-").map(Number);
+      if (y === year && (monthFilter === null || m === monthFilter)) actual += h as number;
     }
     return { planned, actual };
   }
@@ -621,15 +647,31 @@ function ProjectOverview() {
     </div>
   );
 
-  const planLabel   = selectedMonth !== null ? `Plan ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]}` : "Plan รวม";
-  const actualLabel = selectedMonth !== null ? `Actual ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]}` : "Actual รวม";
+  const planLabel   = selectedMonth !== null
+    ? `Plan ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]} ${selectedYear}`
+    : `Plan รวม ${selectedYear}`;
+  const actualLabel = selectedMonth !== null
+    ? `Actual ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]} ${selectedYear}`
+    : `Actual รวม ${selectedYear}`;
 
   return (
     <div className="space-y-4">
-      {/* Month filter bar */}
-      {availMonths.length > 0 && (
+      {/* Year + Month filter bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Year selector */}
+        <div className="flex items-center gap-1">
+          <button onClick={() => setSelectedYear(y => { const i = availYears.indexOf(y); return i > 0 ? availYears[i-1] : y; })}
+            className="px-2 py-1 rounded border text-xs hover:bg-gray-100">◀</button>
+          <span className="text-sm font-semibold w-14 text-center">{selectedYear}</span>
+          <button onClick={() => setSelectedYear(y => { const i = availYears.indexOf(y); return i < availYears.length-1 ? availYears[i+1] : y; })}
+            className="px-2 py-1 rounded border text-xs hover:bg-gray-100">▶</button>
+        </div>
+
+        <span className="text-gray-300">|</span>
+
+        {/* Month selector */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-gray-500 mr-1">แสดง:</span>
+          <span className="text-xs text-gray-500">เดือน:</span>
           <button
             onClick={() => setSelectedMonth(null)}
             className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
@@ -651,12 +693,12 @@ function ProjectOverview() {
             </button>
           ))}
         </div>
-      )}
+      </div>
 
       {groups.map(({ project, employees }) => {
         const isExpanded = expandedId === project.id;
 
-        const empTotals   = employees.map((emp: any) => ({ ...emp, ...calcTotals(emp, selectedMonth) }));
+        const empTotals   = employees.map((emp: any) => ({ ...emp, ...calcTotals(emp, selectedYear, selectedMonth) }));
         const visibleEmps = empTotals.filter((e: any) => e.planned > 0 || e.actual > 0);
         const totalPlan   = visibleEmps.reduce((s: number, e: any) => s + e.planned, 0);
         const totalActual = visibleEmps.reduce((s: number, e: any) => s + e.actual, 0);
