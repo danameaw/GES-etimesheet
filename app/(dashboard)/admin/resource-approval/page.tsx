@@ -538,15 +538,18 @@ function ApprovePlanByProject({ data, loading, acting, planAction }: {
   );
 }
 
+const MONTH_NAMES_TH_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
 // ── MD Overview: ภาพรวมรายบุคคลตามโครงการ (view-only, Plan vs Actual) ────────
 function ProjectOverview() {
-  const [groups,  setGroups]  = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [groups,        setGroups]        = useState<any[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [expandedId,    setExpandedId]    = useState<string | null>(null);
+  const [availMonths,   setAvailMonths]   = useState<number[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // null = รวม
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Fetch all non-draft projects
     const res  = await fetch("/api/resource-plan-monthly?forApproval=1");
     const data = await res.json();
     const projects: any[] = (data.projects || []).filter((p: any) => p.planStatus !== "draft");
@@ -558,33 +561,57 @@ function ProjectOverview() {
         const plans: any[]   = empData.plans   || [];
         const actuals: any[] = empData.actuals || [];
 
-        // Build plan map: DB-id → { employee, totalPlanned }
-        const empMap = new Map<string, { employee: any; totalPlanned: number; totalActual: number }>();
+        // Store per-employee monthly breakdown (not pre-summed)
+        type EmpEntry = { employee: any; monthPlanned: Record<string, number>; monthActual: Record<string, number> };
+        const empMap = new Map<string, EmpEntry>();
         for (const p of plans) {
-          const empId = p.employeeId; // DB id
-          if (!empMap.has(empId)) empMap.set(empId, { employee: p.employee, totalPlanned: 0, totalActual: 0 });
-          empMap.get(empId)!.totalPlanned += p.plannedHrs;
+          const empId = p.employeeId;
+          if (!empMap.has(empId)) empMap.set(empId, { employee: p.employee, monthPlanned: {}, monthActual: {} });
+          const key = `${p.year}-${p.month}`;
+          empMap.get(empId)!.monthPlanned[key] = (empMap.get(empId)!.monthPlanned[key] ?? 0) + p.plannedHrs;
         }
-        // Match actuals by DB id (actuals.employeeId = DB id from timesheet.employeeId)
         for (const a of actuals) {
           if (empMap.has(a.employeeId)) {
-            empMap.get(a.employeeId)!.totalActual += a.actualHrs;
+            const key = `${a.year}-${a.month}`;
+            empMap.get(a.employeeId)!.monthActual[key] = (empMap.get(a.employeeId)!.monthActual[key] ?? 0) + a.actualHrs;
           }
         }
 
         const employees = Array.from(empMap.values())
-          .filter((e) => e.totalPlanned > 0 || e.totalActual > 0)
+          .filter((e) => Object.values(e.monthPlanned).some((h) => h > 0) || Object.values(e.monthActual).some((h) => h > 0))
           .sort((a, b) => a.employee.name.localeCompare(b.employee.name));
 
         return { project: proj, employees };
       })
     );
 
-    setGroups(results.filter((g) => g.employees.length > 0));
+    const filled = results.filter((g) => g.employees.length > 0);
+    setGroups(filled);
+
+    // Collect all distinct months across all projects
+    const monthSet = new Set<number>();
+    for (const { employees } of filled)
+      for (const emp of employees) {
+        for (const key of Object.keys(emp.monthPlanned)) monthSet.add(Number(key.split("-")[1]));
+        for (const key of Object.keys(emp.monthActual))  monthSet.add(Number(key.split("-")[1]));
+      }
+    setAvailMonths(Array.from(monthSet).sort((a, b) => a - b));
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sum hours for a given month filter (null = all months)
+  function calcTotals(emp: any, monthFilter: number | null) {
+    let planned = 0, actual = 0;
+    for (const [key, h] of Object.entries(emp.monthPlanned as Record<string, number>)) {
+      if (monthFilter === null || Number(key.split("-")[1]) === monthFilter) planned += h as number;
+    }
+    for (const [key, h] of Object.entries(emp.monthActual as Record<string, number>)) {
+      if (monthFilter === null || Number(key.split("-")[1]) === monthFilter) actual += h as number;
+    }
+    return { planned, actual };
+  }
 
   if (loading) return <div className="ges-card p-10 text-center text-gray-400 animate-pulse">กำลังโหลด…</div>;
   if (groups.length === 0) return (
@@ -594,13 +621,46 @@ function ProjectOverview() {
     </div>
   );
 
+  const planLabel   = selectedMonth !== null ? `Plan ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]}` : "Plan รวม";
+  const actualLabel = selectedMonth !== null ? `Actual ${MONTH_NAMES_TH_SHORT[selectedMonth - 1]}` : "Actual รวม";
+
   return (
     <div className="space-y-4">
+      {/* Month filter bar */}
+      {availMonths.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500 mr-1">แสดง:</span>
+          <button
+            onClick={() => setSelectedMonth(null)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+              selectedMonth === null
+                ? "bg-blue-600 text-white border-blue-600"
+                : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+            }`}>
+            รวม
+          </button>
+          {availMonths.map((m) => (
+            <button key={m}
+              onClick={() => setSelectedMonth(m)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                selectedMonth === m
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+              }`}>
+              {MONTH_NAMES_TH_SHORT[m - 1]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {groups.map(({ project, employees }) => {
         const isExpanded = expandedId === project.id;
-        const totalPlan   = employees.reduce((s: number, e: any) => s + e.totalPlanned, 0);
-        const totalActual = employees.reduce((s: number, e: any) => s + e.totalActual, 0);
-        const overCount   = employees.filter((e: any) => e.totalActual > e.totalPlanned && e.totalPlanned > 0).length;
+
+        const empTotals   = employees.map((emp: any) => ({ ...emp, ...calcTotals(emp, selectedMonth) }));
+        const visibleEmps = empTotals.filter((e: any) => e.planned > 0 || e.actual > 0);
+        const totalPlan   = visibleEmps.reduce((s: number, e: any) => s + e.planned, 0);
+        const totalActual = visibleEmps.reduce((s: number, e: any) => s + e.actual, 0);
+        const overCount   = visibleEmps.filter((e: any) => e.actual > e.planned && e.planned > 0).length;
 
         return (
           <div key={project.id} className="ges-card overflow-hidden">
@@ -618,7 +678,7 @@ function ProjectOverview() {
                 </div>
                 <h3 className="font-bold text-gray-900 mt-0.5">{project.projectName}</h3>
                 <div className="text-xs text-gray-500 mt-1">
-                  {employees.length} คน · Plan รวม: {totalPlan}h · Actual รวม: {totalActual}h
+                  {visibleEmps.length} คน · {planLabel}: {totalPlan}h · {actualLabel}: {totalActual}h
                   {project.pd && <span> · PD: {project.pd.name}</span>}
                 </div>
               </div>
@@ -636,15 +696,17 @@ function ProjectOverview() {
                     <tr className="bg-gray-50 border-b border-gray-200">
                       <th className="text-left px-4 py-2 font-semibold text-gray-700">พนักงาน</th>
                       <th className="text-left px-3 py-2 font-semibold text-gray-700">แผนก</th>
-                      <th className="text-center px-3 py-2 font-semibold text-gray-700 min-w-[90px]">Plan รวม</th>
-                      <th className="text-center px-3 py-2 font-semibold text-gray-700 min-w-[90px]">Actual รวม</th>
+                      <th className="text-center px-3 py-2 font-semibold text-gray-700 min-w-[90px]">{planLabel}</th>
+                      <th className="text-center px-3 py-2 font-semibold text-gray-700 min-w-[90px]">{actualLabel}</th>
                       <th className="text-center px-3 py-2 font-semibold text-gray-700 min-w-[120px]">สถานะ</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {employees.map((emp: any) => {
-                      const plan   = emp.totalPlanned;
-                      const actual = emp.totalActual;
+                    {visibleEmps.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-xs">ไม่มีข้อมูลสำหรับเดือนนี้</td></tr>
+                    ) : visibleEmps.map((emp: any) => {
+                      const plan   = emp.planned;
+                      const actual = emp.actual;
                       const over   = plan > 0 && actual > plan;
                       const under  = plan > 0 && actual < plan;
                       const diff   = Math.abs(actual - plan);
@@ -683,22 +745,23 @@ function ProjectOverview() {
                         </tr>
                       );
                     })}
-                    {/* Summary row */}
-                    <tr className="border-t-2 border-gray-300 bg-blue-50">
-                      <td colSpan={2} className="px-4 py-2 font-bold text-gray-700 text-sm">รวม</td>
-                      <td className="px-3 py-2 text-center font-bold text-purple-800">{totalPlan > 0 ? `${totalPlan}h` : "–"}</td>
-                      <td className="px-3 py-2 text-center font-bold"
-                        style={{ color: totalActual > totalPlan ? "#dc2626" : totalActual < totalPlan ? "#d97706" : "#16a34a" }}>
-                        {totalActual > 0 ? `${totalActual}h` : "–"}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        {totalPlan > 0 && (
-                          <span className="text-xs font-semibold text-gray-600">
-                            {Math.round((totalActual / totalPlan) * 100)}%
-                          </span>
-                        )}
-                      </td>
-                    </tr>
+                    {visibleEmps.length > 0 && (
+                      <tr className="border-t-2 border-gray-300 bg-blue-50">
+                        <td colSpan={2} className="px-4 py-2 font-bold text-gray-700 text-sm">รวม</td>
+                        <td className="px-3 py-2 text-center font-bold text-purple-800">{totalPlan > 0 ? `${totalPlan}h` : "–"}</td>
+                        <td className="px-3 py-2 text-center font-bold"
+                          style={{ color: totalActual > totalPlan ? "#dc2626" : totalActual < totalPlan ? "#d97706" : "#16a34a" }}>
+                          {totalActual > 0 ? `${totalActual}h` : "–"}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {totalPlan > 0 && (
+                            <span className="text-xs font-semibold text-gray-600">
+                              {Math.round((totalActual / totalPlan) * 100)}%
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
