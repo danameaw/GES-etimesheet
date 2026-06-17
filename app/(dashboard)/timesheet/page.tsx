@@ -649,8 +649,12 @@ export default function TimesheetPage() {
             className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white flex-1 min-w-[160px]"
           >
             <option value="">-- เลือก Task --</option>
-            {taskCodes.map((t) => (
-              <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+            {Array.from(new Set(taskCodes.map((t) => t.category))).sort().map((cat) => (
+              <optgroup key={cat} label={cat}>
+                {taskCodes.filter((t) => t.category === cat).map((t) => (
+                  <option key={t.id} value={t.id}>{t.code} – {t.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <button

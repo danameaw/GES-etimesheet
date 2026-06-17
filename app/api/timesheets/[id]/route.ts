@@ -3,6 +3,31 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const role = (session.user as any).role;
+  if (!["admin", "pd", "md"].includes(role))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const ts = await prisma.timesheet.findUnique({
+    where: { id: params.id },
+    include: {
+      employee: { select: { name: true, employeeId: true, department: true } },
+      entries: {
+        include: {
+          project: { select: { projectNumber: true, projectName: true } },
+          taskCode: { select: { code: true, name: true, category: true } },
+        },
+        orderBy: { project: { projectNumber: "asc" } },
+      },
+    },
+  });
+
+  if (!ts) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ timesheet: ts });
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -40,6 +40,18 @@ export default function AdminPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());       // employee-view: timesheetIds
   const [selectedProjIds, setSelectedProjIds] = useState<Set<string>>(new Set()); // project-view: projectIds
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [detailTs, setDetailTs] = useState<any | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  async function openDetail(timesheetId: string | null) {
+    if (!timesheetId) return;
+    setDetailLoading(true);
+    setDetailTs(null);
+    const res = await fetch(`/api/timesheets/${timesheetId}`);
+    const d = await res.json();
+    setDetailTs(d.timesheet ?? null);
+    setDetailLoading(false);
+  }
 
   const role    = (session?.user as any)?.role;
   const isAdmin = role === "admin";
@@ -190,6 +202,7 @@ export default function AdminPage() {
   if (!canApprove) return null;
 
   return (
+    <>
     <div>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -469,7 +482,12 @@ export default function AdminPage() {
                         </td>
                       )}
                       <td className="font-mono text-xs font-semibold text-blue-900">{emp.employeeId}</td>
-                      <td className="font-medium">{emp.name}</td>
+                      <td className="font-medium">
+                        <button onClick={() => openDetail(emp.timesheetId)} disabled={!emp.timesheetId}
+                          className="text-left hover:text-blue-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-default">
+                          {emp.name}
+                        </button>
+                      </td>
                       <td className="text-gray-600 text-xs">{emp.department}</td>
                       <td className="text-center font-semibold">
                         <span className={emp.totalHrs >= capacity ? "text-green-700" : emp.totalHrs > 0 ? "text-amber-600" : "text-gray-400"}>
@@ -641,8 +659,11 @@ export default function AdminPage() {
                       return (
                       <tr key={emp.id}>
                         <td>
-                          <p className="font-medium text-sm">{emp.name}</p>
-                          <p className="text-xs font-mono text-blue-600">{emp.employeeId}</p>
+                          <button onClick={() => openDetail(emp.timesheetId)} disabled={!emp.timesheetId}
+                            className="text-left hover:text-blue-600 group disabled:cursor-default">
+                            <p className="font-medium text-sm group-hover:underline">{emp.name}</p>
+                            <p className="text-xs font-mono text-blue-600">{emp.employeeId}</p>
+                          </button>
                         </td>
                         <td className="text-xs text-gray-500">{emp.department}</td>
                         <td className="text-center text-sm">
@@ -700,6 +721,89 @@ export default function AdminPage() {
       </p>
       </>
       )}
+    </div>
+
+    {/* Timesheet detail modal */}
+    {(detailLoading || detailTs) && (
+      <TimesheetDetailModal
+        ts={detailTs}
+        loading={detailLoading}
+        onClose={() => { setDetailTs(null); setDetailLoading(false); }}
+      />
+    )}
+    </>
+  );
+}
+
+const DAYS_SHORT = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"];
+
+function TimesheetDetailModal({ ts, loading, onClose }: { ts: any | null; loading: boolean; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl mx-4 max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          {loading ? (
+            <p className="text-sm text-gray-500">กำลังโหลด…</p>
+          ) : ts ? (
+            <div>
+              <p className="font-semibold text-gray-800">{ts.employee.name} <span className="text-xs font-mono text-blue-600 ml-1">{ts.employee.employeeId}</span></p>
+              <p className="text-xs text-gray-400 mt-0.5">{ts.employee.department} · สัปดาห์ {new Date(ts.weekStart).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })} – {new Date(ts.weekEnd).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })}</p>
+            </div>
+          ) : <p className="text-sm text-gray-500">ไม่พบข้อมูล</p>}
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none ml-4">×</button>
+        </div>
+
+        {ts && (
+          <div className="px-5 py-4">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-50 text-gray-500">
+                  <th className="text-left py-2 px-2 font-medium">โครงการ</th>
+                  <th className="text-left py-2 px-2 font-medium">Task</th>
+                  {DAYS_SHORT.map((d) => (
+                    <th key={d} className="text-center py-2 px-1 font-medium w-8">{d}</th>
+                  ))}
+                  <th className="text-center py-2 px-2 font-medium">รวม</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ts.entries.map((e: any) => {
+                  const hrs = [e.monHrs, e.tueHrs, e.wedHrs, e.thuHrs, e.friHrs, e.satHrs, e.sunHrs];
+                  return (
+                    <tr key={e.id} className="border-t border-gray-100">
+                      <td className="py-2 px-2">
+                        <span className="font-medium text-blue-700">{e.project.projectNumber}</span>
+                        <span className="text-gray-500 ml-1 text-xs">{e.project.projectName.length > 28 ? e.project.projectName.slice(0, 26) + "…" : e.project.projectName}</span>
+                      </td>
+                      <td className="py-2 px-2 text-gray-600">{e.taskCode.code} – {e.taskCode.name}</td>
+                      {hrs.map((h, i) => (
+                        <td key={i} className={`text-center py-2 px-1 ${h > 0 ? "text-gray-800 font-medium" : "text-gray-300"}`}>
+                          {h > 0 ? h : "–"}
+                        </td>
+                      ))}
+                      <td className="text-center py-2 px-2 font-semibold text-blue-800">{e.totalHrs}h</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-gray-200 bg-blue-50">
+                  <td colSpan={2} className="py-2 px-2 font-semibold text-gray-700 text-xs">รวมทั้งหมด</td>
+                  {[0,1,2,3,4,5,6].map((i) => {
+                    const dayKey = ["monHrs","tueHrs","wedHrs","thuHrs","friHrs","satHrs","sunHrs"][i];
+                    const total = ts.entries.reduce((s: number, e: any) => s + (e[dayKey] || 0), 0);
+                    return <td key={i} className={`text-center py-2 px-1 font-bold text-xs ${total > 0 ? "text-blue-900" : "text-gray-300"}`}>{total > 0 ? total : "–"}</td>;
+                  })}
+                  <td className="text-center py-2 px-2 font-bold text-blue-900 text-sm">
+                    {ts.entries.reduce((s: number, e: any) => s + e.totalHrs, 0)}h
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
