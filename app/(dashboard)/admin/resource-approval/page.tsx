@@ -567,6 +567,10 @@ function ProjectOverview() {
         // Store per-employee monthly breakdown keyed by "year-month"
         type EmpEntry = { employee: any; monthPlanned: Record<string, number>; monthActual: Record<string, number> };
         const empMap = new Map<string, EmpEntry>();
+        // Build allEmployees lookup map for fallback when no plan exists
+        const allEmpLookup = new Map<string, any>();
+        for (const e of (empData.allEmployees || [])) allEmpLookup.set(e.id, e);
+
         for (const p of plans) {
           const empId = p.employeeId;
           if (!empMap.has(empId)) empMap.set(empId, { employee: p.employee, monthPlanned: {}, monthActual: {} });
@@ -574,6 +578,11 @@ function ProjectOverview() {
           empMap.get(empId)!.monthPlanned[key] = (empMap.get(empId)!.monthPlanned[key] ?? 0) + p.plannedHrs;
         }
         for (const a of actuals) {
+          if (!empMap.has(a.employeeId)) {
+            // Employee has actual hours but no plan — create entry using allEmployees lookup
+            const empInfo = allEmpLookup.get(a.employeeId);
+            if (empInfo) empMap.set(a.employeeId, { employee: empInfo, monthPlanned: {}, monthActual: {} });
+          }
           if (empMap.has(a.employeeId)) {
             const key = `${a.year}-${a.month}`;
             empMap.get(a.employeeId)!.monthActual[key] = (empMap.get(a.employeeId)!.monthActual[key] ?? 0) + a.actualHrs;
