@@ -194,6 +194,17 @@ model AuditLog {
 }
 
 
+// การอนุมัติแบบ per-project โดย PD (แยกจาก timesheet.status ที่เป็น per-week)
+model TimesheetProjectApproval {
+  id           String   @id @default(cuid())
+  timesheetId  String
+  projectId    String
+  approvedById String
+  approvedAt   DateTime @default(now())
+
+  @@unique([timesheetId, projectId])
+}
+
 model TimesheetFavorite {
   id          String   @id @default(cuid())
   employeeId  String

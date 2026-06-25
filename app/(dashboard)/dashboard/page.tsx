@@ -143,12 +143,10 @@ export default function DashboardPage() {
       ) : !data ? null : (
         <>
           {/* ── KPI row ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {[
-              { label: "ชั่วโมงจริง",    value: `${data.summary.totalWorkHours}h`, sub: "ไม่รวม Leave",    color: "text-blue-900" },
-              { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: "Planned total",    color: "text-purple-700" },
-              { label: "Utilization",    value: `${utilizationPct}%`,              sub: "Actual / Plan",    color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
-              { label: "Timesheets",     value: data.summary.submittedCount,       sub: "ส่งแล้ว",          color: "text-gray-800" },
+              { label: "ชั่วโมงจริง",    value: `${data.summary.totalWorkHours}h`, sub: "ไม่รวม Leave",       color: "text-blue-900" },
+              { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: mode === "week" ? "Plan สัปดาห์นี้" : "Plan เดือนนี้", color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
               { label: "🏖️ ลา/วันหยุด", value: `${data.summary.totalLeaveHrs ?? 0}h`, sub: "Leave/Holiday hrs", color: "text-orange-600" },
             ].map((k) => (
               <div key={k.label} className="ges-card p-4">

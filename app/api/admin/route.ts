@@ -59,6 +59,21 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  // fetch per-project PD approvals โดยใช้ timesheetIds ที่ได้มาแล้ว
+  const tsIds = timesheets.map((t) => t.id);
+  const projApprovals = tsIds.length > 0
+    ? await (prisma as any).timesheetProjectApproval.findMany({
+        where: { timesheetId: { in: tsIds } },
+        select: { timesheetId: true, projectId: true },
+      })
+    : [];
+
+  // lookup set: "timesheetId|projectId" → approved by PD
+  const projApprovalSet = new Set<string>(
+    (projApprovals as { timesheetId: string; projectId: string }[])
+      .map((a) => `${a.timesheetId}|${a.projectId}`)
+  );
+
   const timesheetMap = new Map(timesheets.map((t) => [t.employeeId, t]));
 
   const employeeRows = allEmployees.map((emp) => {
@@ -133,13 +148,20 @@ export async function GET(req: NextRequest) {
         if (exists) {
           exists.projectHrs += entry.totalHrs;
         } else {
+          // status priority: timesheet "approved" (admin) > "project-approved" (PD per-project) > timesheet.status
+          const pdApproved = projApprovalSet.has(`${ts.id}|${p.id}`);
+          const status = ts.status === "approved"
+            ? "approved"
+            : pdApproved
+              ? "project-approved"
+              : ts.status;
           proj.employees.push({
             id:          ts.employee.id,
             employeeId:  ts.employee.employeeId,
             name:        ts.employee.name,
             department:  ts.employee.department,
             timesheetId: ts.id,
-            status:      ts.status,
+            status,
             totalHrs:    tsTotalHrs,
             projectHrs:  entry.totalHrs,
             plannedHrs:  planMap.get(`${p.id}|${ts.employee.id}`) ?? 0,

@@ -161,24 +161,24 @@ export default function AdminPage() {
     });
   };
 
-  // Approve all submitted employees in selected projects
+  // Approve selected projects (per-project approval, ไม่กระทบ project อื่น)
   async function bulkApproveProjects() {
     if (selectedProjIds.size === 0) return;
     setBulkLoading(true);
-    const tsIds = new Set<string>();
-    for (const proj of projectRows) {
-      if (!selectedProjIds.has(proj.projectId)) continue;
-      for (const emp of proj.employees) {
-        if (emp.status === "submitted" && emp.timesheetId) tsIds.add(emp.timesheetId);
-      }
-    }
     await Promise.all(
-      Array.from(tsIds).map((id) =>
-        fetch(`/api/timesheets/${id}`, {
-          method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "approve" }),
-        })
-      )
+      Array.from(selectedProjIds).map((projectId) => {
+        const proj = projectRows.find((p: any) => p.projectId === projectId);
+        if (!proj) return Promise.resolve();
+        const tsIds = proj.employees
+          .filter((e: any) => e.status === "submitted" && e.timesheetId)
+          .map((e: any) => e.timesheetId as string);
+        if (tsIds.length === 0) return Promise.resolve();
+        return fetch("/api/timesheets/project-approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ timesheetIds: tsIds, projectId }),
+        });
+      })
     );
     setBulkLoading(false);
     load();
@@ -442,6 +442,9 @@ export default function AdminPage() {
           <ExportBtn type="utilization" week={currentWeek} label="📊 Utilization" />
           <ExportBtn type="missing"     week={currentWeek} label="⚠ Missing" />
           <ExportBtn type="project"     week={currentWeek} label="🗂 By Project" />
+          {isAdmin && (
+            <ExportBtn type="plan-actual" week={currentWeek} label="📋 Plan vs Actual" year={currentWeek.getFullYear()} />
+          )}
         </div>
       </div>
 
@@ -580,7 +583,7 @@ export default function AdminPage() {
             <div className="ges-card p-10 text-center text-gray-400">ไม่มีข้อมูล Timesheet สำหรับสัปดาห์นี้</div>
           ) : projectRows.map((proj) => {
             const submittedEmps = proj.employees.filter((e: any) => e.status === "submitted");
-            const approvedEmps  = proj.employees.filter((e: any) => e.status === "approved");
+            const approvedEmps  = proj.employees.filter((e: any) => e.status === "approved" || e.status === "project-approved");
             const isChecked     = selectedProjIds.has(proj.projectId);
             const hasSubmitted  = submittedEmps.length > 0;
 
@@ -608,18 +611,19 @@ export default function AdminPage() {
                     {submittedEmps.length > 0 && (
                       <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full">รออนุมัติ {submittedEmps.length}</span>
                     )}
-                    {/* Approve this project's submitted employees */}
+                    {/* Approve this project's submitted employees (per-project, ไม่กระทบ project อื่น) */}
                     {canActApprove && submittedEmps.length > 0 && (
                       <button
                         onClick={async () => {
                           setBulkLoading(true);
-                          const tsIds = submittedEmps.map((e: any) => e.timesheetId);
-                          await Promise.all(tsIds.map((id: string) =>
-                            fetch(`/api/timesheets/${id}`, {
-                              method: "PATCH", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ action: "approve" }),
-                            })
-                          ));
+                          const tsIds = submittedEmps
+                            .map((e: any) => e.timesheetId)
+                            .filter(Boolean) as string[];
+                          await fetch("/api/timesheets/project-approve", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ timesheetIds: tsIds, projectId: proj.projectId }),
+                          });
                           setBulkLoading(false);
                           load();
                         }}
@@ -691,6 +695,20 @@ export default function AdminPage() {
                                   ✗ ไม่อนุมัติ
                                 </button>
                               </>
+                            )}
+                            {canActApprove && emp.status === "project-approved" && (
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/timesheets/project-approve", {
+                                    method: "DELETE",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ timesheetId: emp.timesheetId, projectId: proj.projectId }),
+                                  });
+                                  load();
+                                }}
+                                className="text-xs text-amber-600 hover:text-amber-700 border border-amber-300 px-2 py-1 rounded hover:bg-amber-50">
+                                🔓 ยกเลิก PD อนุมัติ
+                              </button>
                             )}
                             {canApprove && ["approved","rejected"].includes(emp.status) && (
                               <button onClick={() => act(emp.timesheetId, "unlock")}
@@ -810,11 +828,12 @@ function TimesheetDetailModal({ ts, loading, onClose }: { ts: any | null; loadin
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    submitted: { label: "รออนุมัติ",     cls: "bg-amber-100 text-amber-800" },
-    approved:  { label: "✓ อนุมัติแล้ว", cls: "bg-green-100 text-green-800" },
-    rejected:  { label: "✗ ไม่อนุมัติ",  cls: "bg-red-100 text-red-800" },
-    draft:     { label: "Draft",          cls: "bg-gray-100 text-gray-600" },
-    missing:   { label: "ยังไม่ส่ง",     cls: "bg-red-50 text-red-500" },
+    submitted:        { label: "รออนุมัติ",        cls: "bg-amber-100 text-amber-800" },
+    approved:         { label: "✓ อนุมัติแล้ว",    cls: "bg-green-100 text-green-800" },
+    "project-approved": { label: "✓ PD อนุมัติแล้ว", cls: "bg-teal-100 text-teal-800" },
+    rejected:         { label: "✗ ไม่อนุมัติ",     cls: "bg-red-100 text-red-800" },
+    draft:            { label: "Draft",             cls: "bg-gray-100 text-gray-600" },
+    missing:          { label: "ยังไม่ส่ง",        cls: "bg-red-50 text-red-500" },
   };
   const s = map[status] ?? map.missing;
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
@@ -836,10 +855,13 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, label }: { type: string; week: Date; label: string }) {
+function ExportBtn({ type, week, label, year }: { type: string; week: Date; label: string; year?: number }) {
   const weekStr = `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}`;
+  const href = year
+    ? `/api/export?type=${type}&year=${year}`
+    : `/api/export?type=${type}&week=${weekStr}`;
   return (
-    <a href={`/api/export?type=${type}&week=${weekStr}`}
+    <a href={href}
       className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
       {label}
     </a>

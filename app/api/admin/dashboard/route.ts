@@ -7,6 +7,27 @@ import { isPD, isGesMgmt } from "@/lib/roles";
 const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// นับ working days (Mon-Fri) ในเดือน
+function workingDaysInMonth(year: number, month: number): number {
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  let count = 0;
+  for (let d = 1; d <= last; d++) {
+    const dow = new Date(Date.UTC(year, month - 1, d)).getUTCDay();
+    if (dow >= 1 && dow <= 5) count++;
+  }
+  return count || 20;
+}
+
+// นับ working days ของ week นั้นที่ตกอยู่ในเดือนที่ระบุ (เผื่อ week ข้ามเดือน)
+function workingDaysOfWeekInMonth(weekStart: Date, year: number, month: number): number {
+  let count = 0;
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(weekStart.getTime() + i * 86400000);
+    if (d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) count++;
+  }
+  return count || 5;
+}
+
 function weekRange(wStart: Date) {
   return { gte: new Date(wStart.getTime() - MS_13H), lt: new Date(wStart.getTime() + MS_13H) };
 }
@@ -75,7 +96,9 @@ export async function GET(req: NextRequest) {
     where: tsWhere,
     include: {
       entries: {
-        where: projectId ? { projectId } : undefined,
+        where: projectId
+          ? { projectId }
+          : pdProjectIds ? { projectId: { in: pdProjectIds } } : undefined,
         include: { project: true, taskCode: true },
       },
       employee: true,
@@ -116,11 +139,23 @@ export async function GET(req: NextRequest) {
     include: { project: { select: { id: true, projectNumber: true, projectName: true } } },
   });
 
+  // Week mode: pro-rate monthly plan ตาม proportion working days จริงของ week นั้น
+  let weekProRate = 1;
+  if (mode === "week" && weekParam) {
+    const wd = new Date(weekParam + "T00:00:00.000Z");
+    const y  = wd.getUTCFullYear();
+    const m  = wd.getUTCMonth() + 1;
+    const daysInWeekForMonth = workingDaysOfWeekInMonth(wd, y, m);
+    const daysInMonth        = workingDaysInMonth(y, m);
+    weekProRate = daysInWeekForMonth / daysInMonth;
+  }
+
   const planByProj = new Map<string, { num: string; name: string; planned: number }>();
   for (const p of empPlans) {
+    const hrs = Math.round(p.plannedHrs * weekProRate * 10) / 10;
     const x = planByProj.get(p.projectId);
-    if (x) x.planned += p.plannedHrs;
-    else planByProj.set(p.projectId, { num: p.project.projectNumber, name: p.project.projectName, planned: p.plannedHrs });
+    if (x) x.planned += hrs;
+    else planByProj.set(p.projectId, { num: p.project.projectNumber, name: p.project.projectName, planned: hrs });
   }
 
   const pvaPids = new Set([...Array.from(planByProj.keys()), ...Array.from(actualByProj.keys())]);
@@ -137,9 +172,10 @@ export async function GET(req: NextRequest) {
 
   const LEAVE_CODES = ["1001", "1002", "1003", "1004", "1005"];
 
-  // ── 3. Top Employees ──
+  // ── 3. Top Employees (ไม่รวม Leave/Holiday เพื่อให้สอดคล้องกับ KPI ชั่วโมงจริง) ──
   const empMap = new Map<string, { name: string; hours: number; department: string }>();
   for (const e of entries) {
+    if (LEAVE_CODES.includes(e.taskCode.code)) continue;
     const emp = e.ts.employee;
     if (deptFilter && emp.department !== deptFilter) continue;
     const x = empMap.get(emp.id);

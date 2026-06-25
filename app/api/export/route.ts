@@ -5,6 +5,9 @@ import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
 import * as XLSX from "xlsx";
 
+const MS_13H = 13 * 60 * 60 * 1000;
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
 // ±13h tolerance window for backward-compat with Thailand UTC+7 stored dates
 function weekRange(weekStart: Date) {
   const MS_13H = 13 * 60 * 60 * 1000;
@@ -19,6 +22,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") || "weekly";
   const weekParam = searchParams.get("week");
+  const role = (session.user as any).role;
 
   // weekParam sent as "yyyy-MM-dd" to avoid timezone shifts
   const weekStart = weekParam
@@ -161,6 +165,149 @@ export async function GET(req: NextRequest) {
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 30 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, "Missing");
+  } else if (type === "plan-actual") {
+    // Admin only
+    if (role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
+
+    const yearParam = searchParams.get("year");
+    const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
+    const months = [1,2,3,4,5,6,7,8,9,10,11,12];
+    const LEAVE_CODES = ["1001","1002","1003","1004","1005"];
+
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd   = new Date(Date.UTC(year + 1, 0, 1));
+
+    const [plans, rawEntries] = await Promise.all([
+      prisma.resourcePlanEmployeeMonthly.findMany({
+        where: { year },
+        include: {
+          employee: { select: { id: true, employeeId: true, name: true, department: true } },
+          project:  { select: { id: true, projectNumber: true, projectName: true } },
+        },
+      }),
+      prisma.timesheetEntry.findMany({
+        where: {
+          timesheet: {
+            weekStart: { gte: new Date(yearStart.getTime() - MS_13H), lt: new Date(yearEnd.getTime() + MS_13H) },
+            status: { in: DONE_STATUSES },
+          },
+          taskCode: { code: { notIn: LEAVE_CODES } },
+        },
+        include: {
+          timesheet: { include: { employee: { select: { id: true, employeeId: true, name: true, department: true } } } },
+          project:   { select: { id: true, projectNumber: true, projectName: true } },
+        },
+      }),
+    ]);
+
+    // Build structure: projectId → employeeId → monthIndex → { plan, actual }
+    type EmpData = { employeeId: string; name: string; dept: string; months: { plan: number; actual: number }[] };
+    type ProjData = { num: string; name: string; emps: Map<string, EmpData> };
+    const projMap = new Map<string, ProjData>();
+
+    const getProj = (id: string, num: string, name: string) => {
+      if (!projMap.has(id)) projMap.set(id, { num, name, emps: new Map() });
+      return projMap.get(id)!;
+    };
+    const getEmp = (proj: ProjData, empId: string, empNo: string, empName: string, dept: string) => {
+      if (!proj.emps.has(empId)) proj.emps.set(empId, { employeeId: empNo, name: empName, dept, months: months.map(() => ({ plan: 0, actual: 0 })) });
+      return proj.emps.get(empId)!;
+    };
+
+    // Plans
+    for (const p of plans) {
+      const proj = getProj(p.projectId, p.project.projectNumber, p.project.projectName);
+      const emp  = getEmp(proj, p.employee.id, p.employee.employeeId, p.employee.name, p.employee.department);
+      emp.months[p.month - 1].plan += p.plannedHrs;
+    }
+
+    // Actuals (only within the year)
+    for (const e of rawEntries) {
+      if (e.totalHrs === 0) continue;
+      const d = new Date(e.timesheet.weekStart);
+      const m = d.getUTCMonth() + 1;
+      if (d.getUTCFullYear() !== year) continue;
+      const emp0 = e.timesheet.employee;
+      const proj = getProj(e.project.id, e.project.projectNumber, e.project.projectName);
+      const emp  = getEmp(proj, emp0.id, emp0.employeeId, emp0.name, emp0.department);
+      emp.months[m - 1].actual += e.totalHrs;
+    }
+
+    // Build header rows (merged month columns: Plan | Actual)
+    const headerMonth = ["โครงการ / พนักงาน", "รหัสพนักงาน", "แผนก"];
+    const headerSub   = ["", "", ""];
+    for (const m of months) {
+      headerMonth.push(`${MONTH_NAMES[m-1]} ${year}`, "");
+      headerSub.push("Plan (h)", "Actual (h)");
+    }
+    headerMonth.push("รวม Plan", "รวม Actual", "Variance %");
+    headerSub.push("", "", "");
+
+    const rows: any[][] = [
+      [`GES E-Timesheet — Plan vs Actual ${year}`],
+      [`Export: ${format(new Date(), "dd/MM/yyyy HH:mm")}  (Admin only)`],
+      [],
+      headerMonth,
+      headerSub,
+    ];
+
+    // Sort projects by projectNumber
+    const sortedProjs = Array.from(projMap.values()).sort((a, b) => a.num.localeCompare(b.num));
+
+    for (const proj of sortedProjs) {
+      // Project header
+      rows.push([`${proj.num} — ${proj.name}`, "", "", ...Array(months.length * 2 + 3).fill("")]);
+
+      const projMonthTotals = months.map(() => ({ plan: 0, actual: 0 }));
+
+      // Employee rows sorted by employeeId
+      const sortedEmps = Array.from(proj.emps.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
+      for (const emp of sortedEmps) {
+        const row: any[] = [emp.name, emp.employeeId, emp.dept];
+        let totalPlan = 0, totalActual = 0;
+        for (let mi = 0; mi < 12; mi++) {
+          const { plan, actual } = emp.months[mi];
+          row.push(plan > 0 ? plan : "–", actual > 0 ? actual : "–");
+          totalPlan   += plan;
+          totalActual += actual;
+          projMonthTotals[mi].plan   += plan;
+          projMonthTotals[mi].actual += actual;
+        }
+        const variance = totalPlan > 0 ? `${Math.round(((totalActual - totalPlan) / totalPlan) * 100)}%` : "–";
+        row.push(totalPlan > 0 ? totalPlan : "–", totalActual > 0 ? totalActual : "–", variance);
+        rows.push(row);
+      }
+
+      // Project subtotal row
+      const subRow: any[] = ["", "รวมโครงการ", ""];
+      let ptPlan = 0, ptActual = 0;
+      for (const m of projMonthTotals) {
+        subRow.push(m.plan > 0 ? m.plan : "–", m.actual > 0 ? m.actual : "–");
+        ptPlan += m.plan; ptActual += m.actual;
+      }
+      const ptVariance = ptPlan > 0 ? `${Math.round(((ptActual - ptPlan) / ptPlan) * 100)}%` : "–";
+      subRow.push(ptPlan > 0 ? ptPlan : "–", ptActual > 0 ? ptActual : "–", ptVariance);
+      rows.push(subRow);
+      rows.push([]); // blank separator
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    // Column widths: label cols + 2 cols per month + 3 summary cols
+    ws["!cols"] = [
+      { wch: 30 }, { wch: 14 }, { wch: 20 },
+      ...Array(24).fill({ wch: 10 }),
+      { wch: 12 }, { wch: 12 }, { wch: 10 },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, `Plan vs Actual ${year}`);
+
+    const buf2 = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const fname2 = `GES_PlanActual_${year}_${format(new Date(), "yyyyMMdd")}.xlsx`;
+    return new NextResponse(buf2, {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${fname2}"`,
+      },
+    });
   }
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
