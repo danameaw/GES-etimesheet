@@ -271,7 +271,7 @@ export async function GET(req: NextRequest) {
 
   // PD: แสดง leave เฉพาะพนักงานที่มีงานใน project ของ PD (ใน period นี้)
   const pdEmpDbIds = pdProjectIds !== null
-    ? [...new Set(deduped.map((ts) => ts.employeeId))]
+    ? Array.from(new Set(deduped.map((ts) => ts.employeeId)))
     : null;
   if (pdEmpDbIds !== null && pdEmpDbIds.length > 0)
     leaveTsWhere.employeeId = { in: pdEmpDbIds };
