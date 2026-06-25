@@ -849,19 +849,6 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, label, year }: { type: string; week: Date; label: string; year?: number }) {
-  const weekStr = `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}`;
-  const href = year
-    ? `/api/export?type=${type}&year=${year}`
-    : `/api/export?type=${type}&week=${weekStr}`;
-  return (
-    <a href={href}
-      className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
-      {label}
-    </a>
-  );
-}
-
 function PlanActualExportBtn({ week }: { week: Date }) {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<{ id: string; projectNumber: string; projectName: string }[]>([]);
@@ -884,7 +871,7 @@ function PlanActualExportBtn({ week }: { week: Date }) {
   const toggle = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
   };
