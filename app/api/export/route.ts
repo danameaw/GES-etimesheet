@@ -174,12 +174,17 @@ export async function GET(req: NextRequest) {
     const months = [1,2,3,4,5,6,7,8,9,10,11,12];
     const LEAVE_CODES = ["1001","1002","1003","1004","1005"];
 
+    // optional project filter
+    const projIdsParam = searchParams.get("projectIds");
+    const projIdFilter = projIdsParam ? projIdsParam.split(",").filter(Boolean) : null;
+    const projWhere = projIdFilter ? { projectId: { in: projIdFilter } } : {};
+
     const yearStart = new Date(Date.UTC(year, 0, 1));
     const yearEnd   = new Date(Date.UTC(year + 1, 0, 1));
 
     const [plans, rawEntries] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
-        where: { year },
+        where: { year, ...projWhere },
         include: {
           employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
           project:  { select: { id: true, projectNumber: true, projectName: true } },
@@ -192,6 +197,7 @@ export async function GET(req: NextRequest) {
             status: { in: DONE_STATUSES },
           },
           taskCode: { code: { notIn: LEAVE_CODES } },
+          ...(projIdFilter ? { projectId: { in: projIdFilter } } : {}),
         },
         include: {
           timesheet: { include: { employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } } } },
