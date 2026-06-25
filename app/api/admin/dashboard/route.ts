@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { startOfWeek, subWeeks, format, addDays } from "date-fns";
 import { isPD, isGesMgmt } from "@/lib/roles";
 
 const MS_13H = 13 * 60 * 60 * 1000;
@@ -103,6 +102,14 @@ export async function GET(req: NextRequest) {
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
     Object.assign(planWhere, { year: y, month: m });
+  } else if (weekParam) {
+    // week view: ใช้ plan ของเดือนที่ week นั้นอยู่
+    const wd = new Date(weekParam + "T00:00:00.000Z");
+    Object.assign(planWhere, { year: wd.getUTCFullYear(), month: wd.getUTCMonth() + 1 });
+  }
+  // GES Management: filter plan เฉพาะพนักงานใน dept นั้น
+  if (deptFilter) {
+    Object.assign(planWhere, { employee: { department: deptFilter, isActive: true } });
   }
   const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
     where: planWhere,
@@ -128,63 +135,9 @@ export async function GET(req: NextRequest) {
   for (const e of entries) catMap.set(e.taskCode.category, (catMap.get(e.taskCode.category) || 0) + e.totalHrs);
   const taskBreakdown = Array.from(catMap.entries()).map(([category, hours]) => ({ category, hours })).sort((a, b) => b.hours - a.hours);
 
-  // ── 3. Utilization Trend (6 weeks) ──
-  const totalEmployees = await prisma.employee.count({
-    where: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
-  });
-  const weeklyTrend: { week: string; utilization: number; totalHrs: number; capacity: number }[] = [];
-  const anchor = weekParam ? new Date(weekParam + "T00:00:00.000Z") : new Date();
-
-  // Leave/Holiday task codes ที่ไม่นับใน Utilization
   const LEAVE_CODES = ["1001", "1002", "1003", "1004", "1005"];
 
-  async function getWeekHrs(wStart: Date) {
-    const wTs = await prisma.timesheet.findMany({
-      where: { weekStart: weekRange(wStart), status: { in: ["submitted","approved"] }, ...(projectId ? { entries: { some: { projectId } } } : {}) },
-      include: {
-        entries: {
-          where: projectId ? { projectId } : undefined,
-          include: { taskCode: { select: { code: true } } },
-        },
-      },
-    });
-    // ไม่นับ Leave/Holiday (1001-1005) ใน utilization
-    return wTs.reduce((s, ts) =>
-      s + (ts.entries as any[]).reduce((ss: number, e: any) =>
-        LEAVE_CODES.includes(e.taskCode?.code) ? ss : ss + e.totalHrs, 0), 0);
-  }
-
-  // Count Mon–Fri holidays in a 7-day window starting from wStart
-  async function getWeekHolidayDays(wStart: Date): Promise<number> {
-    const wEnd = new Date(wStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const hols = await prisma.holiday.findMany({ where: { date: { gte: wStart, lt: wEnd } } });
-    return hols.filter((h) => {
-      const d = new Date(h.date).getUTCDay();
-      return d >= 1 && d <= 5; // Mon–Fri only
-    }).length;
-  }
-
-  if (mode === "month" && monthParam) {
-    const [y, m] = monthParam.split("-").map(Number);
-    const mStart = new Date(Date.UTC(y, m - 1, 1));
-    const mEnd   = new Date(Date.UTC(y, m, 1));
-    let w = startOfWeek(mStart, { weekStartsOn: 1 });
-    while (w < mEnd) {
-      const [hrs, holidayDays] = await Promise.all([getWeekHrs(w), getWeekHolidayDays(w)]);
-      const capacity = totalEmployees * Math.max(0, 40 - holidayDays * 8);
-      weeklyTrend.push({ week: format(w, "dd MMM"), utilization: capacity > 0 ? Math.round((hrs / capacity) * 100) : 0, totalHrs: hrs, capacity });
-      w = addDays(w, 7);
-    }
-  } else {
-    for (let i = 5; i >= 0; i--) {
-      const wStart = startOfWeek(subWeeks(anchor, i), { weekStartsOn: 1 });
-      const [hrs, holidayDays] = await Promise.all([getWeekHrs(wStart), getWeekHolidayDays(wStart)]);
-      const capacity = totalEmployees * Math.max(0, 40 - holidayDays * 8);
-      weeklyTrend.push({ week: format(wStart, "dd MMM"), utilization: capacity > 0 ? Math.round((hrs / capacity) * 100) : 0, totalHrs: hrs, capacity });
-    }
-  }
-
-  // ── 4. Top Employees ──
+  // ── 3. Top Employees ──
   const empMap = new Map<string, { name: string; hours: number; department: string }>();
   for (const e of entries) {
     const emp = e.ts.employee;
@@ -243,10 +196,9 @@ export async function GET(req: NextRequest) {
     return { projectId: pid, projectNumber: proj?.projectNumber || "?", projectName: proj?.projectName || "?", months, totalPlanned, totalActual };
   }).filter((p) => p.totalPlanned > 0 || p.totalActual > 0);
 
-  const LEAVE_TASK_CODES = ["1001", "1002", "1003", "1004", "1005"];
-  const totalHours       = entries.reduce((s, e) => s + e.totalHrs, 0);
-  const totalWorkHours   = entries
-    .filter((e) => !LEAVE_TASK_CODES.includes(e.taskCode.code))
+  const totalHours     = entries.reduce((s, e) => s + e.totalHrs, 0);
+  const totalWorkHours = entries
+    .filter((e) => !LEAVE_CODES.includes(e.taskCode.code))
     .reduce((s, e) => s + e.totalHrs, 0);
   const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
 
@@ -307,31 +259,61 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  // ── 6. Leave/Holiday Breakdown (task category "Leave") ──
-  const leaveEntries = entries.filter((e) =>
-    LEAVE_TASK_CODES.includes(e.taskCode.code) || e.taskCode.category === "Holiday"
-  );
-  const leaveByEmp = new Map<string, { name: string; employeeId: string; department: string; hours: number }>();
-  for (const e of leaveEntries) {
-    const emp = e.ts.employee;
-    const x   = leaveByEmp.get(emp.id);
-    if (x) x.hours += e.totalHrs;
-    else leaveByEmp.set(emp.id, { name: emp.name, employeeId: emp.employeeId, department: emp.department, hours: e.totalHrs });
+  // ── 6. Leave/Holiday Breakdown ──
+  // Fetch leave แยกต่างหาก ไม่ผูกกับ project filter
+  // เพื่อให้เห็น leave ของพนักงานที่ลาทั้งสัปดาห์ (ไม่มี project entry)
+  const leaveTsWhere: any = {
+    status: { in: ["submitted", "approved"] },
+    employee: { isActive: true },
+  };
+  if (Object.keys(dateFilter).length) leaveTsWhere.weekStart = dateFilter;
+  if (deptFilter) leaveTsWhere.employee = { ...leaveTsWhere.employee, department: deptFilter };
+
+  // PD: แสดง leave เฉพาะพนักงานที่มีงานใน project ของ PD (ใน period นี้)
+  const pdEmpDbIds = pdProjectIds !== null
+    ? [...new Set(deduped.map((ts) => ts.employeeId))]
+    : null;
+  if (pdEmpDbIds !== null && pdEmpDbIds.length > 0)
+    leaveTsWhere.employeeId = { in: pdEmpDbIds };
+
+  let leaveBreakdown: { name: string; employeeId: string; department: string; hours: number }[] = [];
+  let totalLeaveHrs = 0;
+
+  if (pdEmpDbIds === null || pdEmpDbIds.length > 0) {
+    const leaveTS = await prisma.timesheet.findMany({
+      where: leaveTsWhere,
+      include: {
+        entries: {
+          where: { taskCode: { code: { in: LEAVE_CODES } } },
+          include: { taskCode: { select: { code: true } } },
+        },
+        employee: { select: { id: true, employeeId: true, name: true, department: true } },
+      },
+    });
+    const leaveByEmp = new Map<string, { name: string; employeeId: string; department: string; hours: number }>();
+    for (const ts of leaveTS) {
+      for (const e of ts.entries) {
+        if (e.totalHrs <= 0) continue;
+        const emp = ts.employee;
+        const x   = leaveByEmp.get(emp.id);
+        if (x) x.hours += e.totalHrs;
+        else leaveByEmp.set(emp.id, { name: emp.name, employeeId: emp.employeeId, department: emp.department, hours: e.totalHrs });
+      }
+    }
+    leaveBreakdown = Array.from(leaveByEmp.values()).sort((a, b) => b.hours - a.hours);
+    totalLeaveHrs  = leaveBreakdown.reduce((s, e) => s + e.hours, 0);
   }
-  const leaveBreakdown = Array.from(leaveByEmp.values()).sort((a, b) => b.hours - a.hours);
-  const totalLeaveHrs  = leaveEntries.reduce((s, e) => s + e.totalHrs, 0);
 
   return NextResponse.json({
     allProjects,
     planVsActual,
     taskBreakdown,
-    weeklyTrend,
     topEmployees,
     allDepts,
     planActualMatrix,
     empActualMatrix,
     matrixMonths:    matMonths,
     leaveBreakdown,
-    summary: { totalHours, totalWorkHours, totalPlanned, submittedCount: deduped.length, totalEmployees, mode, totalLeaveHrs },
+    summary: { totalHours, totalWorkHours, totalPlanned, submittedCount: deduped.length, mode, totalLeaveHrs },
   });
 }

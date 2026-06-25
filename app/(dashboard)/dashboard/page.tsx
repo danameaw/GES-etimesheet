@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { format, addWeeks, subWeeks, startOfWeek, addMonths, subMonths, startOfMonth } from "date-fns";
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement,
-  PointElement, LineElement, Title, Tooltip, Legend, BarController, LineController,
+  Title, Tooltip, Legend,
 } from "chart.js";
-import { Bar, Doughnut, Chart } from "react-chartjs-2";
+import { Bar, Doughnut } from "react-chartjs-2";
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend, BarController, LineController);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
 
 const DEPT_COLORS = ["#1e3a5f","#2563eb","#0891b2","#059669","#d97706","#dc2626","#7c3aed","#db2777","#65a30d","#ea580c"];
 const CAT_COLORS  = ["#2563eb","#0891b2","#059669","#d97706","#7c3aed","#dc2626","#db2777","#65a30d"];
@@ -17,7 +17,6 @@ const CAT_COLORS  = ["#2563eb","#0891b2","#059669","#d97706","#7c3aed","#dc2626"
 interface Project        { id: string; projectNumber: string; projectName: string; }
 interface PlanVsActual   { projectId: string; projectNumber: string; projectName: string; planned: number; actual: number; }
 interface TaskRow         { category: string; hours: number; }
-interface TrendRow        { week: string; utilization: number; totalHrs: number; }
 interface EmpRow          { name: string; hours: number; department: string; }
 interface LeaveRow        { name: string; employeeId: string; department: string; hours: number; }
 interface MatrixProject   { projectId: string; projectNumber: string; projectName: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; }
@@ -28,7 +27,6 @@ interface DashData {
   allProjects:      Project[];
   planVsActual:     PlanVsActual[];
   taskBreakdown:    TaskRow[];
-  weeklyTrend:      TrendRow[];
   topEmployees:     EmpRow[];
   allDepts:         string[];
   planActualMatrix: MatrixProject[];
@@ -207,10 +205,9 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* ── Charts 2+3: ซ่อนสำหรับ GES Management (ไม่เกี่ยวกับ dept view) ── */}
-          {!isGESMgmt && <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-            {/* Chart 2: Task Breakdown */}
-            <div className="ges-card p-5 lg:col-span-2">
+          {/* ── Chart 2: Task Breakdown — ซ่อนสำหรับ GES Management ── */}
+          {!isGESMgmt && (
+            <div className="ges-card p-5">
               <h2 className="font-semibold text-gray-800 mb-1">② Task Breakdown</h2>
               <p className="text-xs text-gray-400 mb-3">
                 {selectedProject ? "ชั่วโมงแยก Discipline โปรเจกต์นี้" : "ชั่วโมงแยกตาม Task Category"}
@@ -218,7 +215,7 @@ export default function DashboardPage() {
               {data.taskBreakdown.length === 0 ? (
                 <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
               ) : (
-                <div style={{ height: 220 }}>
+                <div style={{ height: 240 }}>
                   <Doughnut
                     data={{
                       labels: data.taskBreakdown.slice(0, 8).map((t) => t.category),
@@ -227,7 +224,7 @@ export default function DashboardPage() {
                     options={{
                       responsive: true, maintainAspectRatio: false,
                       plugins: {
-                        legend: { position: "right" as const, labels: { font: { size: 10 }, boxWidth: 12, padding: 8 } },
+                        legend: { position: "right" as const, labels: { font: { size: 11 }, boxWidth: 14, padding: 10 } },
                         tooltip: { callbacks: { label: (i) => ` ${i.label}: ${i.raw}h` } },
                       },
                     }}
@@ -235,39 +232,7 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-
-            {/* Chart 3: Utilization Trend */}
-            <div className="ges-card p-5 lg:col-span-3">
-              <h2 className="font-semibold text-gray-800 mb-1">③ Utilization Trend</h2>
-              <p className="text-xs text-gray-400 mb-3">% ชั่วโมงงาน (ไม่รวม Leave) ÷ Capacity · เส้นแดง = เป้า 80%</p>
-              {data.weeklyTrend.length === 0 ? (
-                <div className="h-48 flex items-center justify-center text-gray-400 text-sm">ไม่มีข้อมูล</div>
-              ) : (
-                <div style={{ height: 220 }}>
-                  <Chart
-                    type="bar"
-                    data={{
-                      labels: data.weeklyTrend.map((w) => w.week),
-                      datasets: [
-                        { type: "bar"  as const, label: "ชั่วโมง (h)", data: data.weeklyTrend.map((w) => w.totalHrs), backgroundColor: "rgba(37,99,235,0.2)", borderRadius: 4, yAxisID: "yHrs" },
-                        { type: "line" as const, label: "Utilization %", data: data.weeklyTrend.map((w) => w.utilization), borderColor: "#1e3a5f", backgroundColor: "transparent", tension: 0.3, pointBackgroundColor: "#1e3a5f", pointRadius: 4, yAxisID: "yPct" },
-                        { type: "line" as const, label: "Target 80%", data: data.weeklyTrend.map(() => 80), borderColor: "#dc2626", borderDash: [6, 3], backgroundColor: "transparent", pointRadius: 0, yAxisID: "yPct" },
-                      ],
-                    }}
-                    options={{
-                      responsive: true, maintainAspectRatio: false,
-                      plugins: { legend: { display: true, position: "top" as const }, tooltip: { callbacks: { label: (i) => i.datasetIndex === 0 ? ` ${i.raw}h` : ` ${i.raw}%` } } },
-                      scales: {
-                        yHrs: { type: "linear" as const, position: "left"  as const, beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } },
-                        yPct: { type: "linear" as const, position: "right" as const, beginAtZero: true, max: 130, grid: { display: false }, ticks: { callback: (v) => `${v}%` } },
-                        x: { grid: { display: false } },
-                      },
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>}
+          )}
 
           {/* ── Chart 4: Top Employees ── */}
           <div className="ges-card p-5">
