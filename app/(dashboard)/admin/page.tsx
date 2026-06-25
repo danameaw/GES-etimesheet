@@ -17,7 +17,7 @@ interface ProjectRow {
   }[];
 }
 interface Summary {
-  total: number; submitted: number; draft: number; missing: number; rejected: number; weekStart: string; weekEnd: string;
+  total: number; submitted: number; approved: number; draft: number; missing: number; rejected: number; weekStart: string; weekEnd: string;
   weekCapacity: number;
 }
 
@@ -190,7 +190,7 @@ export default function AdminPage() {
   };
 
   const weekEnd = addDays(currentWeek, 6);
-  const approvedCount = employees.filter((e) => e.status === "approved").length;
+  const approvedCount = summary?.approved ?? employees.filter((e) => e.status === "approved" || e.status === "project-approved").length;
 
   const filtered = employees.filter((e) => {
     const matchFilter = filter === "all" || e.status === filter;
@@ -438,10 +438,6 @@ export default function AdminPage() {
               )}
             </>
           )}
-          <ExportBtn type="weekly"      week={currentWeek} label="📥 Weekly" />
-          <ExportBtn type="utilization" week={currentWeek} label="📊 Utilization" />
-          <ExportBtn type="missing"     week={currentWeek} label="⚠ Missing" />
-          <ExportBtn type="project"     week={currentWeek} label="🗂 By Project" />
           {isAdmin && (
             <ExportBtn type="plan-actual" week={currentWeek} label="📋 Plan vs Actual" year={currentWeek.getFullYear()} />
           )}

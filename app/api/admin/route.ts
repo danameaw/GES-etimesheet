@@ -107,7 +107,24 @@ export async function GET(req: NextRequest) {
     ? employeeRows.filter((e) => scopedEmpIds.has(e.id))
     : employeeRows;
 
-  const submitted = countRows.filter((e) => e.status === "submitted").length;
+  // สร้าง reverse map: timesheetId → timesheet (สำหรับ PD per-project approval check)
+  const timesheetByIdMap = new Map(timesheets.map((t) => [t.id, t]));
+
+  // PD: employee ถือว่า "อนุมัติแล้ว" ถ้า submitted + ทุก project ใน scope ได้รับ project-approval
+  function isFullyProjectApproved(emp: { timesheetId: string | null; status: string }): boolean {
+    if (emp.status !== "submitted" || !emp.timesheetId) return false;
+    if (!scopedProjectIds) return false; // non-PD ใช้ timesheet.status ปกติ
+    const ts = timesheetByIdMap.get(emp.timesheetId);
+    if (!ts) return false;
+    const projsInScope = ts.entries
+      .map((e) => e.project.id)
+      .filter((pid) => scopedProjectIds.has(pid));
+    if (projsInScope.length === 0) return false;
+    return projsInScope.every((pid) => projApprovalSet.has(`${emp.timesheetId}|${pid}`));
+  }
+
+  const submitted = countRows.filter((e) => e.status === "submitted" && !isFullyProjectApproved(e)).length;
+  const approved  = countRows.filter((e) => e.status === "approved" || isFullyProjectApproved(e)).length;
   const draft     = countRows.filter((e) => e.status === "draft").length;
   const missing   = countRows.filter((e) => e.status === "missing").length;
   const rejected  = countRows.filter((e) => e.status === "rejected").length;
@@ -186,6 +203,7 @@ export async function GET(req: NextRequest) {
     summary: {
       total:        pdProjectIds ? summaryEmployees.length : allEmployees.length,
       submitted,
+      approved,
       draft,
       missing,
       rejected,
