@@ -168,7 +168,7 @@ export default function DashboardPage() {
               <div style={{ height: 260 }}>
                 <Bar
                   data={{
-                    labels: data.planVsActual.map((p) => p.projectNumber),
+                    labels: data.planVsActual.map((p) => [p.projectNumber, p.projectName.length > 18 ? p.projectName.slice(0, 17) + "…" : p.projectName]),
                     datasets: [
                       {
                         label: "Plan",
@@ -190,14 +190,19 @@ export default function DashboardPage() {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {
                       legend: { display: true, position: "top" as const },
-                      tooltip: { callbacks: { afterBody: (items) => {
-                        const idx = items[0].dataIndex;
-                        const p = data.planVsActual[idx];
-                        const pct = p.planned > 0 ? Math.round((p.actual/p.planned)*100) : 0;
-                        return [`${p.projectName}`, `Utilization: ${pct}%`];
-                      }}},
+                      tooltip: { callbacks: {
+                        title: (items) => {
+                          const p = data.planVsActual[items[0].dataIndex];
+                          return `${p.projectNumber} — ${p.projectName}`;
+                        },
+                        afterBody: (items) => {
+                          const p = data.planVsActual[items[0].dataIndex];
+                          const pct = p.planned > 0 ? Math.round((p.actual/p.planned)*100) : 0;
+                          return [`Utilization: ${pct}%`];
+                        },
+                      }},
                     },
-                    scales: { y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } }, x: { grid: { display: false } } },
+                    scales: { y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { callback: (v) => `${v}h` } }, x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0, autoSkip: false } } },
                   }}
                 />
               </div>
@@ -496,11 +501,11 @@ function MatrixTable({ rows, matrixMonths, onCellClick }: {
 }) {
   if (!rows.length) return <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan</div>;
 
-  // แสดงเฉพาะเดือนที่มี plan > 0 อย่างน้อย 1 โปรเจกต์
+  // แสดงเฉพาะเดือนที่มี plan หรือ actual > 0 อย่างน้อย 1 แถว
   const visibleMonths = matrixMonths.filter((mm) =>
     rows.some((row) => {
       const m = row.months.find((x) => x.year === mm.year && x.month === mm.month);
-      return (m?.planned ?? 0) > 0;
+      return (m?.planned ?? 0) > 0 || (m?.actual ?? 0) > 0;
     })
   );
 

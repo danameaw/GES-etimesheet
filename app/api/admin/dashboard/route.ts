@@ -255,10 +255,13 @@ export async function GET(req: NextRequest) {
       prisma.timesheet.findMany({
         where: {
           weekStart: { gte: new Date(matStart.getTime() - MS_13H), lte: new Date(matEnd.getTime() + MS_13H) },
-          employee: { department: deptFilter },
+          employee: { department: deptFilter, isActive: true },
           status: { in: ["submitted", "approved"] },
         },
-        include: { employee: { select: { id: true } }, entries: { select: { totalHrs: true } } },
+        include: {
+          employee: { select: { id: true, employeeId: true, name: true, position: true } },
+          entries: { select: { totalHrs: true } },
+        },
       }),
     ]);
 
@@ -280,6 +283,8 @@ export async function GET(req: NextRequest) {
       const hrs = ts.entries.reduce((s: number, e: any) => s + e.totalHrs, 0);
       const k = `${ts.employee.id}|${y}|${m}`;
       empActMap.set(k, (empActMap.get(k) ?? 0) + hrs);
+      // seed พนักงานที่มี Actual แต่ไม่มี Plan เข้า matrix ด้วย
+      if (!empMeta.has(ts.employee.id)) empMeta.set(ts.employee.id, ts.employee);
     }
 
     empActualMatrix = Array.from(empMeta.values()).map((emp) => {
