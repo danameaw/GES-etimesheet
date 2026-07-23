@@ -337,6 +337,7 @@ export default function DashboardPage() {
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-300" /> Actual &gt; Plan</span>
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300" /> On Plan (≥80%)</span>
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-100 border border-amber-300" /> Under Plan (&lt;80%)</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-sky-100 border border-sky-300" /> มี Actual แต่ไม่มีแผน</span>
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-gray-100 border border-gray-200" /> ไม่มีแผน</span>
               </div>
             </div>
@@ -542,19 +543,21 @@ function MatrixTable({ rows, matrixMonths, onCellClick }: {
               {visibleMonths.map((mm) => {
                 const m = row.months.find((x) => x.year === mm.year && x.month === mm.month) ?? { planned: 0, actual: 0 };
                 const hasData = m.planned > 0 || m.actual > 0;
+                const noPlan  = m.planned <= 0 && m.actual > 0;   // มี Actual แต่ไม่มี Plan
                 const over    = m.planned > 0 && m.actual > m.planned;
                 const onPlan  = m.planned > 0 && m.actual >= m.planned * 0.8;
-                const cellBg  = !hasData ? "" : over ? "bg-red-50" : onPlan ? "bg-green-50" : "bg-amber-50";
+                const cellBg  = !hasData ? "" : noPlan ? "bg-sky-50" : over ? "bg-red-50" : onPlan ? "bg-green-50" : "bg-amber-50";
+                const txt     = noPlan ? "text-sky-700" : over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700";
                 const pct     = m.planned > 0 ? Math.round((m.actual / m.planned) * 100) : 0;
                 const clickable = hasData && m.actual > 0 && !!onCellClick;
                 return (
                   <td key={`${mm.year}-${mm.month}`}
                     className={`px-2 py-2 text-center ${cellBg} ${clickable ? "cursor-pointer hover:ring-2 hover:ring-inset hover:ring-blue-400 transition" : ""}`}
                     onClick={clickable ? () => onCellClick!(row, mm) : undefined}
-                    title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%${clickable ? " — คลิกเพื่อดูรายละเอียด" : ""}` : "ไม่มีแผน"}>
+                    title={hasData ? (noPlan ? `Actual: ${m.actual}h | ไม่มีแผน` : `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%`) + (clickable ? " — คลิกเพื่อดูรายละเอียด" : "") : "ไม่มีแผน"}>
                     {hasData ? (
                       <div>
-                        <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"} ${clickable ? "underline decoration-dotted underline-offset-2" : ""}`}>{m.actual}h</div>
+                        <div className={`font-semibold ${txt} ${clickable ? "underline decoration-dotted underline-offset-2" : ""}`}>{m.actual}h</div>
                         <div className="text-gray-400">/{m.planned}h</div>
                         {m.planned > 0 && <div className={`font-medium ${over ? "text-red-600" : onPlan ? "text-green-600" : "text-amber-600"}`}>{pct}%</div>}
                       </div>
