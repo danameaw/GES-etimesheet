@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [deptFilter, setDeptFilter] = useState<string>("");
+  const [drill, setDrill] = useState<{ type: "project" | "emp"; id: string; title: string; monthLabel: string; year: number; month: number } | null>(null);
 
   const weekLabel  = `สัปดาห์ ${format(selectedWeek, "dd MMM yyyy")}`;
   const monthLabel = format(selectedMonth, "MMM yyyy");
@@ -350,6 +351,7 @@ export default function DashboardPage() {
                     totalActual: e.totalActual,
                   }))}
                   matrixMonths={data.matrixMonths}
+                  onCellClick={(row, m) => setDrill({ type: "emp", id: row.key, title: `${row.label1} (${row.label2})`, monthLabel: m.label, year: m.year, month: m.month })}
                 />
               )
             ) : (
@@ -368,20 +370,129 @@ export default function DashboardPage() {
                     isProject: true,
                   }))}
                   matrixMonths={data.matrixMonths}
+                  onCellClick={(row, m) => setDrill({ type: "project", id: row.key, title: `${row.label1} — ${row.label2}`, monthLabel: m.label, year: m.year, month: m.month })}
                 />
               )
             )}
           </div>
         </>
       )}
+
+      {drill && <DrillModal drill={drill} onClose={() => setDrill(null)} />}
+    </div>
+  );
+}
+
+// ── Drill-down popup: ใครลงเวลาในเซลล์ที่คลิกบ้าง ────────────────────────────
+interface DrillProjectRow { empId: string; employeeId: string; name: string; department: string; position: string; hours: number; }
+interface DrillEmpRow     { projectId: string; projectNumber: string; projectName: string; hours: number; }
+interface DrillResp {
+  type: "project" | "emp";
+  projectNumber?: string; projectName?: string; employeeId?: string; name?: string;
+  rows: (DrillProjectRow | DrillEmpRow)[];
+  totalHours: number;
+}
+
+function DrillModal({ drill, onClose }: {
+  drill: { type: "project" | "emp"; id: string; title: string; monthLabel: string; year: number; month: number };
+  onClose: () => void;
+}) {
+  const [resp, setResp]       = useState<DrillResp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setResp(null);
+    const p = new URLSearchParams({ year: String(drill.year), month: String(drill.month) });
+    if (drill.type === "project") p.set("projectId", drill.id);
+    else p.set("empId", drill.id);
+    fetch(`/api/admin/dashboard/cell?${p}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) { setResp(d); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [drill]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const isProject = drill.type === "project";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-semibold text-gray-900">{drill.title}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {isProject ? "ผู้ลงเวลา" : "โครงการที่ลงเวลา"} · {drill.monthLabel}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none px-1">×</button>
+        </div>
+
+        <div className="overflow-y-auto">
+          {loading ? (
+            <div className="p-10 text-center text-gray-400 text-sm">กำลังโหลด…</div>
+          ) : !resp || resp.rows.length === 0 ? (
+            <div className="p-10 text-center text-gray-400 text-sm">ไม่มีข้อมูลการลงเวลาในเดือนนี้</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr className="text-gray-600">
+                  <th className="text-left px-5 py-2.5 font-medium w-8">#</th>
+                  <th className="text-left px-2 py-2.5 font-medium">{isProject ? "พนักงาน" : "โครงการ"}</th>
+                  <th className="text-right px-5 py-2.5 font-medium">ชั่วโมง</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resp.rows.map((r, i) => (
+                  <tr key={isProject ? (r as DrillProjectRow).empId : (r as DrillEmpRow).projectId}
+                    className="border-t border-gray-100">
+                    <td className="px-5 py-2.5 text-gray-400">{i + 1}</td>
+                    <td className="px-2 py-2.5">
+                      {isProject ? (
+                        <>
+                          <p className="font-medium text-gray-800">{(r as DrillProjectRow).name}</p>
+                          <p className="text-xs text-gray-400">{(r as DrillProjectRow).employeeId} · {(r as DrillProjectRow).department}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-mono font-medium text-blue-700">{(r as DrillEmpRow).projectNumber}</p>
+                          <p className="text-xs text-gray-400 truncate max-w-[280px]">{(r as DrillEmpRow).projectName}</p>
+                        </>
+                      )}
+                    </td>
+                    <td className="px-5 py-2.5 text-right font-semibold text-gray-900 whitespace-nowrap">{r.hours}h</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-gray-200 bg-gray-50">
+                  <td className="px-5 py-2.5" colSpan={2}>
+                    <span className="font-semibold text-gray-700">รวม ({resp.rows.length} รายการ)</span>
+                  </td>
+                  <td className="px-5 py-2.5 text-right font-bold text-blue-900 whitespace-nowrap">{resp.totalHours}h</td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Reusable Matrix Table ────────────────────────────────────────────────────
-function MatrixTable({ rows, matrixMonths }: {
-  rows: { key: string; label1: string; label2: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; isProject?: boolean }[];
+type MatrixRow = { key: string; label1: string; label2: string; months: { year: number; month: number; label: string; planned: number; actual: number }[]; totalPlanned: number; totalActual: number; isProject?: boolean };
+
+function MatrixTable({ rows, matrixMonths, onCellClick }: {
+  rows: MatrixRow[];
   matrixMonths: { year: number; month: number; label: string }[];
+  onCellClick?: (row: MatrixRow, month: { year: number; month: number; label: string }) => void;
 }) {
   if (!rows.length) return <div className="p-10 text-center text-gray-400 text-sm">ยังไม่มีข้อมูล Plan</div>;
 
@@ -430,12 +541,15 @@ function MatrixTable({ rows, matrixMonths }: {
                 const onPlan  = m.planned > 0 && m.actual >= m.planned * 0.8;
                 const cellBg  = !hasData ? "" : over ? "bg-red-50" : onPlan ? "bg-green-50" : "bg-amber-50";
                 const pct     = m.planned > 0 ? Math.round((m.actual / m.planned) * 100) : 0;
+                const clickable = hasData && m.actual > 0 && !!onCellClick;
                 return (
-                  <td key={`${mm.year}-${mm.month}`} className={`px-2 py-2 text-center ${cellBg}`}
-                    title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%` : "ไม่มีแผน"}>
+                  <td key={`${mm.year}-${mm.month}`}
+                    className={`px-2 py-2 text-center ${cellBg} ${clickable ? "cursor-pointer hover:ring-2 hover:ring-inset hover:ring-blue-400 transition" : ""}`}
+                    onClick={clickable ? () => onCellClick!(row, mm) : undefined}
+                    title={hasData ? `Plan: ${m.planned}h | Actual: ${m.actual}h | ${pct}%${clickable ? " — คลิกเพื่อดูรายละเอียด" : ""}` : "ไม่มีแผน"}>
                     {hasData ? (
                       <div>
-                        <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"}`}>{m.actual}h</div>
+                        <div className={`font-semibold ${over ? "text-red-700" : onPlan ? "text-green-700" : "text-amber-700"} ${clickable ? "underline decoration-dotted underline-offset-2" : ""}`}>{m.actual}h</div>
                         <div className="text-gray-400">/{m.planned}h</div>
                         {m.planned > 0 && <div className={`font-medium ${over ? "text-red-600" : onPlan ? "text-green-600" : "text-amber-600"}`}>{pct}%</div>}
                       </div>
