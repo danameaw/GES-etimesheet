@@ -257,6 +257,7 @@ function TasksTab() {
   const emptyForm = { code: "", name: "", category: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [addingNewCat, setAddingNewCat] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -268,6 +269,8 @@ function TasksTab() {
   useEffect(() => { load(); }, [load]);
 
   const categories = Array.from(new Set(tasks.map((t) => t.category))).sort();
+  // หมวดหมู่ที่เลือกได้ใน dropdown = หมวดมาตรฐาน + หมวดที่เคยเพิ่มไว้ในฐานข้อมูล
+  const selectableCategories = Array.from(new Set([...TASK_CATEGORIES, ...categories])).sort();
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -291,6 +294,7 @@ function TasksTab() {
   const startEdit = (t: TaskCode) => {
     setEditId(t.id);
     setForm({ code: t.code, name: t.name, category: t.category });
+    setAddingNewCat(false);
     setShowAdd(false);
   };
 
@@ -350,7 +354,7 @@ function TasksTab() {
           <button onClick={handleClearAll} className="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
             🗑 ลบทั้งหมด
           </button>
-          <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); }} className="ges-btn-primary text-sm">+ เพิ่มรหัสงาน</button>
+          <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); setAddingNewCat(false); }} className="ges-btn-primary text-sm">+ เพิ่มรหัสงาน</button>
         </div>
       </div>
 
@@ -368,15 +372,43 @@ function TasksTab() {
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">หมวดหมู่ (หัวข้อหลัก) *</label>
-              <select className="ges-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                <option value="">-- เลือกหมวดหมู่ --</option>
-                {TASK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              {addingNewCat ? (
+                <div className="flex gap-1.5">
+                  <input
+                    className="ges-input"
+                    autoFocus
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    placeholder="พิมพ์ชื่อหมวดหมู่ใหม่"
+                  />
+                  <button
+                    type="button"
+                    title="กลับไปเลือกจากรายการ"
+                    onClick={() => { setAddingNewCat(false); setForm({ ...form, category: "" }); }}
+                    className="ges-btn-secondary text-sm whitespace-nowrap px-3"
+                  >
+                    ↩ เลือกจากรายการ
+                  </button>
+                </div>
+              ) : (
+                <select
+                  className="ges-input"
+                  value={form.category}
+                  onChange={(e) => {
+                    if (e.target.value === "__new__") { setAddingNewCat(true); setForm({ ...form, category: "" }); }
+                    else setForm({ ...form, category: e.target.value });
+                  }}
+                >
+                  <option value="">-- เลือกหมวดหมู่ --</option>
+                  {selectableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  <option value="__new__">➕ เพิ่มหมวดหมู่ใหม่…</option>
+                </select>
+              )}
             </div>
           </div>
           <div className="flex gap-2 mt-4">
             <button onClick={handleSave} disabled={saving} className="ges-btn-primary">{saving ? "Saving…" : "💾 บันทึก"}</button>
-            <button onClick={() => { setEditId(null); setShowAdd(false); }} className="ges-btn-secondary">ยกเลิก</button>
+            <button onClick={() => { setEditId(null); setShowAdd(false); setAddingNewCat(false); }} className="ges-btn-secondary">ยกเลิก</button>
           </div>
         </div>
       )}
