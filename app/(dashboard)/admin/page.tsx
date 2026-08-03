@@ -29,6 +29,9 @@ export default function AdminPage() {
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
   const [rangeFrom, setRangeFrom] = useState(() => format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [rangeTo, setRangeTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [rangeProjects, setRangeProjects] = useState<{ id: string; projectNumber: string; projectName: string }[]>([]);
+  const [rangeProjIds, setRangeProjIds] = useState<Set<string>>(new Set()); // selected projects (all = no filter)
+  const [projPickerOpen, setProjPickerOpen] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
@@ -131,6 +134,16 @@ export default function AdminPage() {
   }, [navMode, currentWeek, currentMonth]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Lazy-load project list the first time the user enters "ช่วง" (range) mode
+  useEffect(() => {
+    if (navMode !== "range" || rangeProjects.length > 0) return;
+    fetch("/api/projects").then((r) => r.json()).then((d) => {
+      const list = (d.projects || []) as { id: string; projectNumber: string; projectName: string }[];
+      setRangeProjects(list);
+      setRangeProjIds(new Set(list.map((p) => p.id))); // default: all selected (= no filter)
+    }).catch(() => {});
+  }, [navMode, rangeProjects.length]);
 
   async function act(timesheetId: string, action: "approve" | "reject" | "unlock") {
     setActing((s) => new Set(s).add(timesheetId));
@@ -317,11 +330,22 @@ export default function AdminPage() {
             ? `ช่วง (${rangeFrom} → ${rangeTo})`
             : "รายสัปดาห์"}:
         </span>
+        {navMode === "range" && (
+          <button onClick={() => setProjPickerOpen(true)}
+            className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+            🏗 โครงการ {rangeProjects.length > 0 && rangeProjIds.size < rangeProjects.length ? `(${rangeProjIds.size})` : "(ทั้งหมด)"}
+          </button>
+        )}
         {(() => {
           const exMonth = navMode === "month" ? currentMonth : undefined;
           const exFrom = navMode === "range" ? rangeFrom : undefined;
           const exTo = navMode === "range" ? rangeTo : undefined;
-          const p = { week: currentWeek, month: exMonth, from: exFrom, to: exTo };
+          // Send projectIds only when a strict subset is selected (all or none → no filter param)
+          const exProjIds = navMode === "range" && rangeProjIds.size > 0 && rangeProjIds.size < rangeProjects.length
+            ? Array.from(rangeProjIds).join(",")
+            : undefined;
+          const noneSelected = navMode === "range" && rangeProjects.length > 0 && rangeProjIds.size === 0;
+          const p = { week: currentWeek, month: exMonth, from: exFrom, to: exTo, projectIds: exProjIds, forceDisabled: noneSelected };
           return (
             <>
               <ExportBtn type="weekly"      {...p} label="📥 Detail" />
@@ -335,6 +359,55 @@ export default function AdminPage() {
         })()}
         {isAdmin && <PlanActualExportBtn week={currentWeek} />}
       </div>
+
+      {/* Project picker modal (range mode) */}
+      {projPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setProjPickerOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-gray-800">เลือกโครงการ</h2>
+                <p className="text-xs text-gray-500 mt-0.5">กรอง Export เฉพาะโครงการที่เลือก (เลือกทั้งหมด = ไม่กรอง)</p>
+              </div>
+              <button onClick={() => setProjPickerOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              {rangeProjects.length === 0 ? (
+                <div className="text-center text-gray-400 py-8">กำลังโหลดโครงการ…</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-gray-500">{rangeProjIds.size}/{rangeProjects.length} โครงการ</span>
+                    <button
+                      onClick={() => setRangeProjIds(rangeProjIds.size === rangeProjects.length ? new Set() : new Set(rangeProjects.map((p) => p.id)))}
+                      className="text-xs text-blue-600 hover:underline">
+                      {rangeProjIds.size === rangeProjects.length ? "ยกเลิกทั้งหมด" : "เลือกทั้งหมด"}
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {rangeProjects.map((p) => (
+                      <label key={p.id} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer">
+                        <input type="checkbox" checked={rangeProjIds.has(p.id)}
+                          onChange={() => setRangeProjIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                            return next;
+                          })}
+                          className="rounded border-gray-300 text-blue-600 w-4 h-4 flex-shrink-0" />
+                        <span className="text-xs font-mono text-blue-700 w-16 flex-shrink-0">{p.projectNumber}</span>
+                        <span className="text-sm text-gray-700 truncate">{p.projectName}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end">
+              <button onClick={() => setProjPickerOpen(false)} className="ges-btn-primary text-sm px-4 py-2">เสร็จสิ้น</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── RANGE VIEW (export-only) ── */}
       {navMode === "range" && (
@@ -910,13 +983,14 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, month, from, to, label, year }: { type: string; week: Date; month?: Date; from?: string; to?: string; label: string; year?: number }) {
+function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, label, year }: { type: string; week: Date; month?: Date; from?: string; to?: string; projectIds?: string; forceDisabled?: boolean; label: string; year?: number }) {
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const disabled = !!(from !== undefined && (!from || !to));
+  const disabled = forceDisabled || !!(from !== undefined && (!from || !to));
+  const projQs = projectIds ? `&projectIds=${projectIds}` : "";
   const href = year
     ? `/api/export?type=${type}&year=${year}`
     : from && to
-    ? `/api/export?type=${type}&from=${from}&to=${to}`
+    ? `/api/export?type=${type}&from=${from}&to=${to}${projQs}`
     : month
     ? `/api/export?type=${type}&month=${fmt(startOfMonth(month))}`
     : `/api/export?type=${type}&week=${fmt(week)}`;

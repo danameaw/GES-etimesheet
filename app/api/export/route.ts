@@ -49,7 +49,12 @@ export async function GET(req: NextRequest) {
   const monthParam = searchParams.get("month"); // "yyyy-MM-dd" (first day of month)
   const fromParam = searchParams.get("from");   // "yyyy-MM-dd" (custom range start)
   const toParam = searchParams.get("to");       // "yyyy-MM-dd" (custom range end)
+  const projectIdsParam = searchParams.get("projectIds"); // optional comma-separated project ids
   const role = (session.user as any).role;
+
+  // Optional project filter (applies to entry-based reports)
+  const projIds = projectIdsParam ? projectIdsParam.split(",").filter(Boolean) : null;
+  const projEntryFilter = projIds ? { projectId: { in: projIds } } : {};
 
   // Period: custom range, monthly (all weeks in the month), or weekly.
   // Params sent as "yyyy-MM-dd" to avoid timezone shifts.
@@ -98,7 +103,7 @@ export async function GET(req: NextRequest) {
       where: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } },
       include: {
         employee: true,
-        entries: { include: { project: true, taskCode: true } },
+        entries: { where: projEntryFilter, include: { project: true, taskCode: true } },
       },
     });
 
@@ -133,7 +138,7 @@ export async function GET(req: NextRequest) {
 
   } else if (type === "project") {
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -180,7 +185,7 @@ export async function GET(req: NextRequest) {
 
   } else if (type === "employee") {
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -227,7 +232,7 @@ export async function GET(req: NextRequest) {
 
   } else if (type === "task") {
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -277,7 +282,7 @@ export async function GET(req: NextRequest) {
       prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
       prisma.timesheet.findMany({
         where: { weekStart: tsWeekFilter },
-        include: { employee: true, entries: true },
+        include: { employee: true, entries: { where: projEntryFilter } },
       }),
     ]);
 
