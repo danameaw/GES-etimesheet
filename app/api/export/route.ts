@@ -79,29 +79,93 @@ export async function GET(req: NextRequest) {
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
-    const projectMap = new Map<string, { name: string; hours: number; employees: Set<string> }>();
+    // Group by project → employee (breakdown per person within each project)
+    type EmpRow = { employeeId: string; name: string; department: string; hours: number };
+    type ProjRow = { name: string; hours: number; employees: Map<string, EmpRow> };
+    const projectMap = new Map<string, ProjRow>();
     for (const e of entries) {
+      if (e.totalHrs === 0) continue;
       const key = e.project.projectNumber;
       if (!projectMap.has(key)) {
-        projectMap.set(key, { name: e.project.projectName, hours: 0, employees: new Set() });
+        projectMap.set(key, { name: e.project.projectName, hours: 0, employees: new Map() });
       }
-      projectMap.get(key)!.hours += e.totalHrs;
-      projectMap.get(key)!.employees.add(e.timesheet.employee.employeeId);
+      const proj = projectMap.get(key)!;
+      proj.hours += e.totalHrs;
+      const emp = e.timesheet.employee;
+      if (!proj.employees.has(emp.employeeId)) {
+        proj.employees.set(emp.employeeId, { employeeId: emp.employeeId, name: emp.name, department: emp.department, hours: 0 });
+      }
+      proj.employees.get(emp.employeeId)!.hours += e.totalHrs;
     }
 
     const rows: any[][] = [
       [`GES E-Timesheet - Project Summary: ${weekLabel}`],
       [],
-      ["Project No.", "Project Name", "Total Hours", "No. of Engineers"],
+      ["Project No.", "Project Name", "Employee ID", "Employee Name", "Department", "Total Hours"],
     ];
 
-    for (const [num, data] of Array.from(projectMap.entries()).sort((a, b) => b[1].hours - a[1].hours)) {
-      rows.push([num, data.name, data.hours, data.employees.size]);
+    // Projects sorted by total hours (desc)
+    for (const [num, proj] of Array.from(projectMap.entries()).sort((a, b) => b[1].hours - a[1].hours)) {
+      // Project header row
+      rows.push([num, proj.name, "", "", `${proj.employees.size} คน`, proj.hours]);
+      // Employee breakdown (sorted by employeeId)
+      const sortedEmps = Array.from(proj.employees.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
+      for (const emp of sortedEmps) {
+        rows.push(["", "", emp.employeeId, emp.name, emp.department, emp.hours]);
+      }
+      rows.push([]); // blank separator
     }
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 40 }, { wch: 14 }, { wch: 18 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, "By Project");
+
+  } else if (type === "employee") {
+    const entries = await prisma.timesheetEntry.findMany({
+      where: { timesheet: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } } },
+      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
+    });
+
+    // Group by employee → project
+    type ProjRow = { number: string; name: string; hours: number };
+    type EmpRow = { employeeId: string; name: string; department: string; projects: Map<string, ProjRow>; total: number };
+    const empMap = new Map<string, EmpRow>();
+
+    for (const e of entries) {
+      if (e.totalHrs === 0) continue;
+      const emp = e.timesheet.employee;
+      if (!empMap.has(emp.employeeId)) {
+        empMap.set(emp.employeeId, { employeeId: emp.employeeId, name: emp.name, department: emp.department, projects: new Map(), total: 0 });
+      }
+      const empRow = empMap.get(emp.employeeId)!;
+      const pkey = e.project.projectNumber;
+      if (!empRow.projects.has(pkey)) {
+        empRow.projects.set(pkey, { number: e.project.projectNumber, name: e.project.projectName, hours: 0 });
+      }
+      empRow.projects.get(pkey)!.hours += e.totalHrs;
+      empRow.total += e.totalHrs;
+    }
+
+    const rows: any[][] = [
+      [`GES E-Timesheet - Summary by Employee: ${weekLabel}`],
+      [],
+      ["Employee ID", "Employee Name", "Department", "Project No.", "Project Name", "Total Hours"],
+    ];
+
+    const sortedEmps = Array.from(empMap.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
+    for (const emp of sortedEmps) {
+      const sortedProjs = Array.from(emp.projects.values()).sort((a, b) => a.number.localeCompare(b.number));
+      for (const p of sortedProjs) {
+        rows.push([emp.employeeId, emp.name, emp.department, p.number, p.name, p.hours]);
+      }
+      // Employee subtotal
+      rows.push(["", "", "", "", "รวม", emp.total]);
+      rows.push([]); // blank separator
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 14 }, { wch: 40 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, "By Employee");
 
   } else if (type === "utilization") {
     const [allEmployees, timesheets] = await Promise.all([

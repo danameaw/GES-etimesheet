@@ -442,6 +442,7 @@ export default function AdminPage() {
           <ExportBtn type="utilization" week={currentWeek} label="📊 Utilization" />
           <ExportBtn type="missing"     week={currentWeek} label="⚠ Missing" />
           <ExportBtn type="project"     week={currentWeek} label="🗂 By Project" />
+          <ExportBtn type="employee"    week={currentWeek} label="👤 By Employee" />
           {isAdmin && <PlanActualExportBtn week={currentWeek} />}
         </div>
       </div>
