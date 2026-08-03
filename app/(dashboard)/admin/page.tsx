@@ -438,6 +438,10 @@ export default function AdminPage() {
               )}
             </>
           )}
+          <ExportBtn type="weekly"      week={currentWeek} label="📥 Weekly" />
+          <ExportBtn type="utilization" week={currentWeek} label="📊 Utilization" />
+          <ExportBtn type="missing"     week={currentWeek} label="⚠ Missing" />
+          <ExportBtn type="project"     week={currentWeek} label="🗂 By Project" />
           {isAdmin && <PlanActualExportBtn week={currentWeek} />}
         </div>
       </div>
@@ -846,6 +850,19 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
         <div className={`${color} text-white w-10 h-10 rounded-xl flex items-center justify-center text-lg`}>{icon}</div>
       </div>
     </button>
+  );
+}
+
+function ExportBtn({ type, week, label, year }: { type: string; week: Date; label: string; year?: number }) {
+  const weekStr = `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}`;
+  const href = year
+    ? `/api/export?type=${type}&year=${year}`
+    : `/api/export?type=${type}&week=${weekStr}`;
+  return (
+    <a href={href}
+      className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+      {label}
+    </a>
   );
 }
 
