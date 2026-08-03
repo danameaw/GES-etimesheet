@@ -282,6 +282,26 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* ── Export toolbar (both week & month modes) ── */}
+      <div className="flex gap-2 flex-wrap items-center mb-4">
+        <span className="text-xs text-gray-500 mr-1">
+          Export {navMode === "month" ? `รายเดือน (${format(currentMonth, "MMM yyyy")})` : "รายสัปดาห์"}:
+        </span>
+        {(() => {
+          const exMonth = navMode === "month" ? currentMonth : undefined;
+          return (
+            <>
+              <ExportBtn type="weekly"      week={currentWeek} month={exMonth} label="📥 Detail" />
+              <ExportBtn type="utilization" week={currentWeek} month={exMonth} label="📊 Utilization" />
+              <ExportBtn type="missing"     week={currentWeek} month={exMonth} label="⚠ Missing" />
+              <ExportBtn type="project"     week={currentWeek} month={exMonth} label="🗂 By Project" />
+              <ExportBtn type="employee"    week={currentWeek} month={exMonth} label="👤 By Employee" />
+            </>
+          );
+        })()}
+        {isAdmin && <PlanActualExportBtn week={currentWeek} />}
+      </div>
+
       {/* ── MONTH VIEW ── */}
       {navMode === "month" && (
         <div className="space-y-3 mb-4">
@@ -438,12 +458,6 @@ export default function AdminPage() {
               )}
             </>
           )}
-          <ExportBtn type="weekly"      week={currentWeek} label="📥 Weekly" />
-          <ExportBtn type="utilization" week={currentWeek} label="📊 Utilization" />
-          <ExportBtn type="missing"     week={currentWeek} label="⚠ Missing" />
-          <ExportBtn type="project"     week={currentWeek} label="🗂 By Project" />
-          <ExportBtn type="employee"    week={currentWeek} label="👤 By Employee" />
-          {isAdmin && <PlanActualExportBtn week={currentWeek} />}
         </div>
       </div>
 
@@ -854,11 +868,13 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, label, year }: { type: string; week: Date; label: string; year?: number }) {
-  const weekStr = `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}`;
+function ExportBtn({ type, week, month, label, year }: { type: string; week: Date; month?: Date; label: string; year?: number }) {
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const href = year
     ? `/api/export?type=${type}&year=${year}`
-    : `/api/export?type=${type}&week=${weekStr}`;
+    : month
+    ? `/api/export?type=${type}&month=${fmt(startOfMonth(month))}`
+    : `/api/export?type=${type}&week=${fmt(week)}`;
   return (
     <a href={href}
       className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">

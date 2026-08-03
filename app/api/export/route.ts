@@ -3,6 +3,21 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
+
+// All Mon-starting weeks (UTC) that overlap the given month — matches admin monthly view
+function weeksInMonthUTC(monthStart: Date): Date[] {
+  const y = monthStart.getUTCFullYear();
+  const m = monthStart.getUTCMonth();
+  const monthEnd = new Date(Date.UTC(y, m + 1, 0)); // last day of month
+  const first = new Date(monthStart);
+  const dow = first.getUTCDay();               // 0=Sun..6=Sat
+  first.setUTCDate(first.getUTCDate() - (dow === 0 ? 6 : dow - 1)); // back to Monday
+  const weeks: Date[] = [];
+  for (let w = new Date(first); w <= monthEnd; w = new Date(w.getTime() + 7 * 86400000)) {
+    weeks.push(new Date(w));
+  }
+  return weeks;
+}
 import * as XLSX from "xlsx";
 
 const MS_13H = 13 * 60 * 60 * 1000;
@@ -22,22 +37,45 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") || "weekly";
   const weekParam = searchParams.get("week");
+  const monthParam = searchParams.get("month"); // "yyyy-MM-dd" (first day of month)
   const role = (session.user as any).role;
 
-  // weekParam sent as "yyyy-MM-dd" to avoid timezone shifts
-  const weekStart = weekParam
-    ? new Date(weekParam + "T00:00:00.000Z")
-    : startOfWeek(new Date(), { weekStartsOn: 1 });
+  // Period: monthly (aggregate all weeks in the month) or weekly.
+  // Params sent as "yyyy-MM-dd" to avoid timezone shifts.
+  const isMonth = !!monthParam;
+  let tsWeekFilter: { gte: Date; lt: Date };
+  let periodLabel: string;
+  let periodKey: string;
+  let weeksCount = 1; // for utilization capacity (weeks × 40h)
+
+  if (isMonth) {
+    const monthStart = new Date(monthParam + "T00:00:00.000Z");
+    const weeks = weeksInMonthUTC(monthStart);
+    weeksCount = weeks.length;
+    const first = weeks[0];
+    const last = weeks[weeks.length - 1];
+    // weekStart (Monday) is stored ±13h; span first→last Monday inclusive
+    tsWeekFilter = { gte: new Date(first.getTime() - MS_13H), lt: new Date(last.getTime() + MS_13H) };
+    periodLabel = format(monthStart, "MMMM yyyy");
+    periodKey = format(monthStart, "yyyy-MM");
+  } else {
+    const weekStart = weekParam
+      ? new Date(weekParam + "T00:00:00.000Z")
+      : startOfWeek(new Date(), { weekStartsOn: 1 });
+    tsWeekFilter = weekRange(weekStart);
+    periodLabel = `${format(weekStart, "dd-MMM")} to ${format(new Date(weekStart.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
+    periodKey = format(weekStart, "yyyy-MM-dd");
+  }
 
   const wb = XLSX.utils.book_new();
-  const weekLabel = `${format(weekStart, "dd-MMM")} to ${format(new Date(weekStart.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
+  const weekLabel = periodLabel;
 
   // Only export submitted or approved timesheets
   const DONE_STATUSES = ["submitted", "approved"];
 
   if (type === "weekly") {
     const timesheets = await prisma.timesheet.findMany({
-      where: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } },
+      where: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } },
       include: {
         employee: true,
         entries: { include: { project: true, taskCode: true } },
@@ -45,7 +83,7 @@ export async function GET(req: NextRequest) {
     });
 
     const rows: any[][] = [
-      [`GES E-Timesheet - Weekly Report: ${weekLabel}`],
+      [`GES E-Timesheet - ${isMonth ? "Monthly" : "Weekly"} Report: ${weekLabel}`],
       [],
       ["Employee ID", "Employee Name", "Department", "Project No.", "Project Name", "Task Code", "Task Name", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total", "Status"],
     ];
@@ -75,7 +113,7 @@ export async function GET(req: NextRequest) {
 
   } else if (type === "project") {
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } } },
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -122,7 +160,7 @@ export async function GET(req: NextRequest) {
 
   } else if (type === "employee") {
     const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: weekRange(weekStart), status: { in: DONE_STATUSES } } },
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
 
@@ -171,13 +209,22 @@ export async function GET(req: NextRequest) {
     const [allEmployees, timesheets] = await Promise.all([
       prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
       prisma.timesheet.findMany({
-        where: { weekStart: weekRange(weekStart) },
+        where: { weekStart: tsWeekFilter },
         include: { employee: true, entries: true },
       }),
     ]);
 
-    const tsMap = new Map(timesheets.map((t) => [t.employeeId, t]));
+    // Aggregate per employee across all weeks in the period (a month has several timesheets per person)
+    const aggMap = new Map<string, { hrs: number; done: number; lastStatus: string }>();
+    for (const t of timesheets) {
+      const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, lastStatus: t.status };
+      a.hrs += t.entries.reduce((s, e) => s + e.totalHrs, 0);
+      if (DONE_STATUSES.includes(t.status)) a.done += 1;
+      a.lastStatus = t.status;
+      aggMap.set(t.employeeId, a);
+    }
 
+    const capacity = 40 * weeksCount; // weekly capacity × number of weeks
     const rows: any[][] = [
       [`GES E-Timesheet - Utilization Report: ${weekLabel}`],
       [],
@@ -185,9 +232,11 @@ export async function GET(req: NextRequest) {
     ];
 
     for (const emp of allEmployees) {
-      const ts = tsMap.get(emp.id);
-      const totalHrs = ts?.entries.reduce((s, e) => s + e.totalHrs, 0) || 0;
-      const utilization = Math.round((totalHrs / 40) * 100);
+      const a = aggMap.get(emp.id);
+      const totalHrs = a?.hrs || 0;
+      const utilization = Math.round((totalHrs / capacity) * 100);
+      // Weekly: the single timesheet's status. Monthly: how many weeks were submitted/approved.
+      const status = !a ? "missing" : isMonth ? `${a.done}/${weeksCount} weeks` : a.lastStatus;
       rows.push([
         emp.employeeId,
         emp.name,
@@ -195,7 +244,7 @@ export async function GET(req: NextRequest) {
         emp.position,
         totalHrs,
         `${utilization}%`,
-        ts?.status || "missing",
+        status,
       ]);
     }
 
@@ -206,7 +255,7 @@ export async function GET(req: NextRequest) {
   } else if (type === "missing") {
     const [allEmployees, timesheets] = await Promise.all([
       prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
-      prisma.timesheet.findMany({ where: { weekStart: weekRange(weekStart) } }),
+      prisma.timesheet.findMany({ where: { weekStart: tsWeekFilter } }),
     ]);
 
     const submittedIds = new Set(
@@ -385,7 +434,7 @@ export async function GET(req: NextRequest) {
   }
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  const filename = `GES_Timesheet_${type}_${format(weekStart, "yyyy-MM-dd")}.xlsx`;
+  const filename = `GES_Timesheet_${type}_${isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
   return new NextResponse(buf, {
     headers: {
