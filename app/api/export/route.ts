@@ -4,6 +4,15 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
 
+// Monday (UTC) of the week containing the given date
+function mondayOfUTC(d: Date): Date {
+  const m = new Date(d);
+  const dow = m.getUTCDay(); // 0=Sun..6=Sat
+  m.setUTCDate(m.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+  m.setUTCHours(0, 0, 0, 0);
+  return m;
+}
+
 // All Mon-starting weeks (UTC) that overlap the given month — matches admin monthly view
 function weeksInMonthUTC(monthStart: Date): Date[] {
   const y = monthStart.getUTCFullYear();
@@ -38,17 +47,28 @@ export async function GET(req: NextRequest) {
   const type = searchParams.get("type") || "weekly";
   const weekParam = searchParams.get("week");
   const monthParam = searchParams.get("month"); // "yyyy-MM-dd" (first day of month)
+  const fromParam = searchParams.get("from");   // "yyyy-MM-dd" (custom range start)
+  const toParam = searchParams.get("to");       // "yyyy-MM-dd" (custom range end)
   const role = (session.user as any).role;
 
-  // Period: monthly (aggregate all weeks in the month) or weekly.
+  // Period: custom range, monthly (all weeks in the month), or weekly.
   // Params sent as "yyyy-MM-dd" to avoid timezone shifts.
-  const isMonth = !!monthParam;
+  const isRange = !!(fromParam && toParam);
+  const isMonth = !isRange && !!monthParam;
   let tsWeekFilter: { gte: Date; lt: Date };
   let periodLabel: string;
   let periodKey: string;
   let weeksCount = 1; // for utilization capacity (weeks × 40h)
 
-  if (isMonth) {
+  if (isRange) {
+    // Include every whole week (Mon–Sun) that overlaps [from, to]
+    const first = mondayOfUTC(new Date(fromParam + "T00:00:00.000Z"));
+    const last = mondayOfUTC(new Date(toParam + "T00:00:00.000Z"));
+    weeksCount = Math.max(1, Math.round((last.getTime() - first.getTime()) / (7 * 86400000)) + 1);
+    tsWeekFilter = { gte: new Date(first.getTime() - MS_13H), lt: new Date(last.getTime() + MS_13H) };
+    periodLabel = `${format(first, "dd-MMM-yyyy")} to ${format(new Date(last.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
+    periodKey = `${format(first, "yyyyMMdd")}-${format(last, "yyyyMMdd")}`;
+  } else if (isMonth) {
     const monthStart = new Date(monthParam + "T00:00:00.000Z");
     const weeks = weeksInMonthUTC(monthStart);
     weeksCount = weeks.length;
@@ -83,7 +103,7 @@ export async function GET(req: NextRequest) {
     });
 
     const rows: any[][] = [
-      [`GES E-Timesheet - ${isMonth ? "Monthly" : "Weekly"} Report: ${weekLabel}`],
+      [`GES E-Timesheet - ${isRange ? "Custom Range" : isMonth ? "Monthly" : "Weekly"} Report: ${weekLabel}`],
       [],
       ["Employee ID", "Employee Name", "Department", "Project No.", "Project Name", "Task Code", "Task Name", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total", "Status"],
     ];
@@ -204,6 +224,53 @@ export async function GET(req: NextRequest) {
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 14 }, { wch: 40 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, "By Employee");
+
+  } else if (type === "task") {
+    const entries = await prisma.timesheetEntry.findMany({
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } } },
+      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
+    });
+
+    // Group by project → task (how many hours each task consumed within a project)
+    type TaskRow = { code: string; name: string; hours: number; employees: Set<string> };
+    type ProjRow = { name: string; hours: number; tasks: Map<string, TaskRow> };
+    const projectMap = new Map<string, ProjRow>();
+    for (const e of entries) {
+      if (e.totalHrs === 0) continue;
+      const pkey = e.project.projectNumber;
+      if (!projectMap.has(pkey)) projectMap.set(pkey, { name: e.project.projectName, hours: 0, tasks: new Map() });
+      const proj = projectMap.get(pkey)!;
+      proj.hours += e.totalHrs;
+      const tkey = e.taskCode.code;
+      if (!proj.tasks.has(tkey)) proj.tasks.set(tkey, { code: e.taskCode.code, name: e.taskCode.name, hours: 0, employees: new Set() });
+      const task = proj.tasks.get(tkey)!;
+      task.hours += e.totalHrs;
+      task.employees.add(e.timesheet.employee.employeeId);
+    }
+
+    const rows: any[][] = [
+      [`GES E-Timesheet - Hours by Project & Task: ${weekLabel}`],
+      [],
+      ["Project No.", "Project Name", "Task Code", "Task Name", "Total Hours", "No. of Engineers"],
+    ];
+
+    // Projects sorted by total hours (desc)
+    for (const [num, proj] of Array.from(projectMap.entries()).sort((a, b) => b[1].hours - a[1].hours)) {
+      const projEmps = new Set<string>();
+      proj.tasks.forEach((t) => t.employees.forEach((id) => projEmps.add(id)));
+      // Project header row (project total + distinct engineers)
+      rows.push([num, proj.name, "", "", proj.hours, `${projEmps.size} คน`]);
+      // Task breakdown, most hours first
+      const sortedTasks = Array.from(proj.tasks.values()).sort((a, b) => b.hours - a.hours);
+      for (const t of sortedTasks) {
+        rows.push(["", "", t.code, t.name, t.hours, `${t.employees.size} คน`]);
+      }
+      rows.push([]); // blank separator
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 40 }, { wch: 10 }, { wch: 30 }, { wch: 12 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws, "By Task");
 
   } else if (type === "utilization") {
     const [allEmployees, timesheets] = await Promise.all([
@@ -434,7 +501,7 @@ export async function GET(req: NextRequest) {
   }
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  const filename = `GES_Timesheet_${type}_${isMonth ? "month_" : ""}${periodKey}.xlsx`;
+  const filename = `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
   return new NextResponse(buf, {
     headers: {

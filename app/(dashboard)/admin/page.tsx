@@ -24,9 +24,11 @@ interface Summary {
 export default function AdminPage() {
   const { data: session } = useSession();
   const router = useRouter();
-  const [navMode, setNavMode] = useState<"week" | "month">("week");
+  const [navMode, setNavMode] = useState<"week" | "month" | "range">("week");
   const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
+  const [rangeFrom, setRangeFrom] = useState(() => format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [rangeTo, setRangeTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [summary, setSummary] = useState<Summary | null>(null);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
@@ -77,6 +79,16 @@ export default function AdminPage() {
     setLoading(true);
     setSelectedIds(new Set());
     setSelectedProjIds(new Set());
+
+    if (navMode === "range") {
+      // Custom range is export-only — no on-screen table to fetch
+      setSummary(null);
+      setEmployees([]);
+      setProjectRows([]);
+      setMonthWeeks([]);
+      setLoading(false);
+      return;
+    }
 
     if (navMode === "week") {
       const weekStr = format(currentWeek, "yyyy-MM-dd");
@@ -215,19 +227,23 @@ export default function AdminPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Toggle week/month */}
+          {/* Toggle week/month/range */}
           <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
             <button onClick={() => setNavMode("week")}
               className={`px-3 py-1.5 transition-colors ${navMode === "week" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
               สัปดาห์
             </button>
             <button onClick={() => setNavMode("month")}
-              className={`px-3 py-1.5 transition-colors ${navMode === "month" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              className={`px-3 py-1.5 transition-colors border-l border-gray-200 ${navMode === "month" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
               เดือน
+            </button>
+            <button onClick={() => setNavMode("range")}
+              className={`px-3 py-1.5 transition-colors border-l border-gray-200 ${navMode === "range" ? "bg-blue-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              ช่วง
             </button>
           </div>
 
-          {navMode === "week" ? (
+          {navMode === "week" && (
             <>
               <button onClick={() => setCurrentWeek((w) => subWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
               <div className="text-center min-w-[200px]">
@@ -237,7 +253,8 @@ export default function AdminPage() {
               <button onClick={() => setCurrentWeek((w) => addWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
               <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">วันนี้</button>
             </>
-          ) : (
+          )}
+          {navMode === "month" && (
             <>
               <button onClick={() => setCurrentMonth((m) => subMonths(m, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← ก่อนหน้า</button>
               <div className="text-center min-w-[160px]">
@@ -247,6 +264,15 @@ export default function AdminPage() {
               <button onClick={() => setCurrentMonth((m) => addMonths(m, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">ถัดไป →</button>
               <button onClick={() => setCurrentMonth(startOfMonth(new Date()))} className="text-xs text-blue-600 hover:underline ml-1">เดือนนี้</button>
             </>
+          )}
+          {navMode === "range" && (
+            <div className="flex items-center gap-2 text-sm">
+              <input type="date" value={rangeFrom} max={rangeTo} onChange={(e) => setRangeFrom(e.target.value)}
+                className="ges-input px-2 py-1.5 text-sm" />
+              <span className="text-gray-400">ถึง</span>
+              <input type="date" value={rangeTo} min={rangeFrom} onChange={(e) => setRangeTo(e.target.value)}
+                className="ges-input px-2 py-1.5 text-sm" />
+            </div>
           )}
           <button onClick={load} title="Refresh" className="text-xs text-gray-500 hover:text-blue-600 ml-1">🔄</button>
         </div>
@@ -282,25 +308,41 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ── Export toolbar (both week & month modes) ── */}
+      {/* ── Export toolbar (week / month / custom range) ── */}
       <div className="flex gap-2 flex-wrap items-center mb-4">
         <span className="text-xs text-gray-500 mr-1">
-          Export {navMode === "month" ? `รายเดือน (${format(currentMonth, "MMM yyyy")})` : "รายสัปดาห์"}:
+          Export {navMode === "month"
+            ? `รายเดือน (${format(currentMonth, "MMM yyyy")})`
+            : navMode === "range"
+            ? `ช่วง (${rangeFrom} → ${rangeTo})`
+            : "รายสัปดาห์"}:
         </span>
         {(() => {
           const exMonth = navMode === "month" ? currentMonth : undefined;
+          const exFrom = navMode === "range" ? rangeFrom : undefined;
+          const exTo = navMode === "range" ? rangeTo : undefined;
+          const p = { week: currentWeek, month: exMonth, from: exFrom, to: exTo };
           return (
             <>
-              <ExportBtn type="weekly"      week={currentWeek} month={exMonth} label="📥 Detail" />
-              <ExportBtn type="utilization" week={currentWeek} month={exMonth} label="📊 Utilization" />
-              <ExportBtn type="missing"     week={currentWeek} month={exMonth} label="⚠ Missing" />
-              <ExportBtn type="project"     week={currentWeek} month={exMonth} label="🗂 By Project" />
-              <ExportBtn type="employee"    week={currentWeek} month={exMonth} label="👤 By Employee" />
+              <ExportBtn type="weekly"      {...p} label="📥 Detail" />
+              <ExportBtn type="task"        {...p} label="🧩 By Task" />
+              <ExportBtn type="project"     {...p} label="🗂 By Project" />
+              <ExportBtn type="employee"    {...p} label="👤 By Employee" />
+              <ExportBtn type="utilization" {...p} label="📊 Utilization" />
+              <ExportBtn type="missing"     {...p} label="⚠ Missing" />
             </>
           );
         })()}
         {isAdmin && <PlanActualExportBtn week={currentWeek} />}
       </div>
+
+      {/* ── RANGE VIEW (export-only) ── */}
+      {navMode === "range" && (
+        <div className="ges-card p-8 text-center text-gray-500">
+          <p className="text-sm">เลือกช่วงเวลาด้านบน แล้วกดปุ่ม Export ที่ต้องการ</p>
+          <p className="text-xs text-gray-400 mt-1">โหมดช่วงใช้สำหรับดาวน์โหลดรายงานเท่านั้น (ไม่แสดงตารางบนหน้าจอ)</p>
+        </div>
+      )}
 
       {/* ── MONTH VIEW ── */}
       {navMode === "month" && (
@@ -868,13 +910,19 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, month, label, year }: { type: string; week: Date; month?: Date; label: string; year?: number }) {
+function ExportBtn({ type, week, month, from, to, label, year }: { type: string; week: Date; month?: Date; from?: string; to?: string; label: string; year?: number }) {
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const disabled = !!(from !== undefined && (!from || !to));
   const href = year
     ? `/api/export?type=${type}&year=${year}`
+    : from && to
+    ? `/api/export?type=${type}&from=${from}&to=${to}`
     : month
     ? `/api/export?type=${type}&month=${fmt(startOfMonth(month))}`
     : `/api/export?type=${type}&week=${fmt(week)}`;
+  if (disabled) {
+    return <span className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap opacity-40 cursor-not-allowed">{label}</span>;
+  }
   return (
     <a href={href}
       className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
