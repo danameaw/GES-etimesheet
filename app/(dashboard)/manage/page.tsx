@@ -74,6 +74,9 @@ function ProjectsTab() {
   const emptyForm = { projectNumber: "", projectName: "", projectType: "project", pdId: "", startDate: "", endDate: "" };
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,6 +125,30 @@ function ProjectsTab() {
     load();
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportMsg(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/manage/projects/import", { method: "POST", body: fd });
+    const data = await res.json();
+    setImporting(false);
+    if (importRef.current) importRef.current.value = "";
+    if (res.ok) {
+      const warn = (data.warnings || []) as string[];
+      let text = `นำเข้าสำเร็จ — สร้างใหม่ ${data.created} · อัปเดต ${data.updated}` +
+        (data.skipped ? ` · ข้าม ${data.skipped}` : "");
+      if (warn.length) text += `\n⚠ ${warn.slice(0, 5).join(" / ")}${warn.length > 5 ? ` …และอีก ${warn.length - 5} รายการ` : ""}`;
+      setImportMsg({ type: "success", text });
+      load();
+    } else {
+      const warn = (data.warnings || []) as string[];
+      setImportMsg({ type: "error", text: (data.error || "เกิดข้อผิดพลาด") + (warn.length ? `\n${warn.slice(0, 5).join(" / ")}` : "") });
+    }
+  };
+
   const filtered = projects.filter((p) => {
     const matchSearch = !search || p.projectNumber.toLowerCase().includes(search.toLowerCase()) || p.projectName.toLowerCase().includes(search.toLowerCase());
     const matchActive = showInactive ? true : p.isActive;
@@ -130,14 +157,32 @@ function ProjectsTab() {
 
   return (
     <div className="space-y-5">
+      {importMsg && (
+        <div className={`px-4 py-2.5 rounded-lg text-sm flex items-start justify-between ${importMsg.type === "success" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+          <span className="whitespace-pre-line">{importMsg.type === "success" ? "✓" : "✗"} {importMsg.text}</span>
+          <button onClick={() => setImportMsg(null)} className="text-lg leading-none ml-4 opacity-50 hover:opacity-100">×</button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap gap-3 items-center justify-between">
         <input className="ges-input max-w-xs" placeholder="ค้นหาโครงการ…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
             แสดงที่ปิดแล้ว
           </label>
+          {/* Excel template: download / import / export — ใช้ template เดียวกัน */}
+          <a href="/api/manage/projects/template" className="ges-btn-secondary text-sm">
+            📄 Template
+          </a>
+          <input ref={importRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFile} />
+          <button onClick={() => importRef.current?.click()} disabled={importing} className="ges-btn-secondary text-sm">
+            {importing ? "⏳ Importing…" : "📥 Import Excel"}
+          </button>
+          <a href={`/api/manage/projects/export${showInactive ? "?all=1" : ""}`} className="ges-btn-secondary text-sm">
+            📤 Export Excel
+          </a>
           <button onClick={() => { setShowAdd(true); setEditId(null); setForm(emptyForm); }}
             className="ges-btn-primary text-sm">+ เพิ่มโครงการ</button>
         </div>
