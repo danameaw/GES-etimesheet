@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
 
   // ใช้ชีต "Projects" ถ้ามี ไม่งั้นใช้ชีตแรกที่ไม่ใช่คู่มือ
-  let sheetName =
+  const sheetName =
     wb.SheetNames.find((n) => n.toLowerCase() === "projects") ||
     wb.SheetNames.find((n) => !n.toLowerCase().includes("guide") && !n.toLowerCase().includes("คู่มือ")) ||
     wb.SheetNames[0];
