@@ -65,6 +65,11 @@ export default function AdminPage() {
   const canApprove    = isPD || isAdmin || isMD;  // เข้าหน้า approval ได้
   const canActApprove = isPD || isMD;             // อนุมัติ/reject ได้ (Admin ทำได้แค่ unlock)
 
+  // ปลดล็อคกลับเป็น draft — ใช้เงื่อนไขเดียวกันทุกมุมมอง (สัปดาห์/เดือน, รายบุคคล/ราย Project).
+  // project-approved = timesheet ยังเป็น submitted แต่ PD อนุมัติส่วนของโครงการนั้นแล้ว จึงยังถูกล็อกอยู่
+  const LOCKED_STATUSES = ["submitted", "approved", "rejected", "project-approved"];
+  const canUnlock = (status: string) => canApprove && LOCKED_STATUSES.includes(status);
+
   useEffect(() => {
     if (session && !canApprove) router.push("/timesheet");
   }, [session, canApprove, router]);
@@ -524,8 +529,9 @@ export default function AdminPage() {
                                         </button>
                                       </div>
                                     )}
-                                    {canApprove && emp.status === "approved" && (
+                                    {canUnlock(emp.status) && (
                                       <button onClick={() => act(emp.timesheetId, "unlock")} disabled={isBusy}
+                                        title="ปลดล็อคกลับเป็น Draft"
                                         className="text-xs text-gray-400 hover:text-orange-600 disabled:opacity-50">🔓</button>
                                     )}
                                   </td>
@@ -676,7 +682,7 @@ export default function AdminPage() {
                               </button>
                             </>
                           )}
-                          {["submitted","approved","rejected"].includes(emp.status) && emp.timesheetId && (
+                          {canUnlock(emp.status) && emp.timesheetId && (
                             <button onClick={() => act(emp.timesheetId!, "unlock")}
                               disabled={acting.has(emp.timesheetId!)}
                               className="text-xs text-amber-600 hover:text-amber-700 hover:underline disabled:opacity-50">
@@ -857,11 +863,12 @@ export default function AdminPage() {
                                 🔓 ยกเลิก PD อนุมัติ
                               </button>
                             )}
-                            {canApprove && ["approved","rejected"].includes(emp.status) && (
+                            {canUnlock(emp.status) && (
                               <button onClick={() => act(emp.timesheetId, "unlock")}
                                 disabled={acting.has(emp.timesheetId)}
+                                title="ปลดล็อคกลับเป็น Draft"
                                 className="text-xs text-amber-600 hover:text-amber-700 border border-amber-300 px-2 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
-                                🔓 ยกเลิก
+                                🔓 ปลดล็อค
                               </button>
                             )}
                             {isAdmin && (
