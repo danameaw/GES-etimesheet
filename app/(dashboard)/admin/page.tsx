@@ -321,44 +321,63 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ── Export toolbar (week / month / custom range) ── */}
-      <div className="flex gap-2 flex-wrap items-center mb-4">
-        <span className="text-xs text-gray-500 mr-1">
-          Export {navMode === "month"
-            ? `รายเดือน (${format(currentMonth, "MMM yyyy")})`
-            : navMode === "range"
-            ? `ช่วง (${rangeFrom} → ${rangeTo})`
-            : "รายสัปดาห์"}:
-        </span>
-        {navMode === "range" && (
-          <button onClick={() => setProjPickerOpen(true)}
-            className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
-            🏗 โครงการ {rangeProjects.length > 0 && rangeProjIds.size < rangeProjects.length ? `(${rangeProjIds.size})` : "(ทั้งหมด)"}
-          </button>
-        )}
-        {(() => {
-          const exMonth = navMode === "month" ? currentMonth : undefined;
-          const exFrom = navMode === "range" ? rangeFrom : undefined;
-          const exTo = navMode === "range" ? rangeTo : undefined;
-          // Send projectIds only when a strict subset is selected (all or none → no filter param)
-          const exProjIds = navMode === "range" && rangeProjIds.size > 0 && rangeProjIds.size < rangeProjects.length
-            ? Array.from(rangeProjIds).join(",")
-            : undefined;
-          const noneSelected = navMode === "range" && rangeProjects.length > 0 && rangeProjIds.size === 0;
-          const p = { week: currentWeek, month: exMonth, from: exFrom, to: exTo, projectIds: exProjIds, forceDisabled: noneSelected };
-          return (
-            <>
+      {/* ── Export section: Executive Report headlines, individual reports below ── */}
+      {(() => {
+        const exMonth = navMode === "month" ? currentMonth : undefined;
+        const exFrom = navMode === "range" ? rangeFrom : undefined;
+        const exTo = navMode === "range" ? rangeTo : undefined;
+        // Send projectIds only when a strict subset is selected (all or none → no filter param)
+        const exProjIds = navMode === "range" && rangeProjIds.size > 0 && rangeProjIds.size < rangeProjects.length
+          ? Array.from(rangeProjIds).join(",")
+          : undefined;
+        const noneSelected = navMode === "range" && rangeProjects.length > 0 && rangeProjIds.size === 0;
+        const p = { week: currentWeek, month: exMonth, from: exFrom, to: exTo, projectIds: exProjIds, forceDisabled: noneSelected };
+        const periodLabel = navMode === "month"
+          ? `รายเดือน · ${format(currentMonth, "MMMM yyyy")}`
+          : navMode === "range"
+          ? `ช่วง · ${rangeFrom} → ${rangeTo}`
+          : `รายสัปดาห์ · ${format(currentWeek, "dd MMM")} – ${format(weekEnd, "dd MMM yyyy")}`;
+
+        return (
+          <div className="ges-card p-5 mb-6">
+            {/* Executive Report — the headline deliverable */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="bg-blue-900 text-white w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0">🎯</div>
+                <div>
+                  <h2 className="font-semibold text-gray-900">Executive Report</h2>
+                  <p className="text-xs text-gray-500 mt-0.5 max-w-xl leading-relaxed">
+                    รายงานฉบับสมบูรณ์สำหรับนำเสนอผู้บริหาร — Dashboard สรุปภาพรวม, รายโครงการ, รายบุคคล,
+                    แยกตาม Task, Utilization และรายชื่อที่ยังไม่ส่ง รวมอยู่ในไฟล์ Excel เดียว
+                  </p>
+                  <p className="text-xs text-blue-800 font-medium mt-1.5">{periodLabel}</p>
+                </div>
+              </div>
+              <ExportBtn type="executive" {...p} label="⬇ ดาวน์โหลด Excel" primary className="text-sm px-5 py-2.5 flex-shrink-0" />
+            </div>
+
+            <div className="border-t border-gray-100 my-4" />
+
+            {/* Individual reports */}
+            <div className="flex gap-2 flex-wrap items-center">
+              <span className="text-xs text-gray-400 mr-1">แยกรายงาน:</span>
+              {navMode === "range" && (
+                <button onClick={() => setProjPickerOpen(true)}
+                  className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+                  🏗 โครงการ {rangeProjects.length > 0 && rangeProjIds.size < rangeProjects.length ? `(${rangeProjIds.size})` : "(ทั้งหมด)"}
+                </button>
+              )}
               <ExportBtn type="weekly"      {...p} label="📥 Detail" />
               <ExportBtn type="task"        {...p} label="🧩 By Task" />
               <ExportBtn type="project"     {...p} label="🗂 By Project" />
               <ExportBtn type="employee"    {...p} label="👤 By Employee" />
               <ExportBtn type="utilization" {...p} label="📊 Utilization" />
               <ExportBtn type="missing"     {...p} label="⚠ Missing" />
-            </>
-          );
-        })()}
-        {isAdmin && <PlanActualExportBtn week={currentWeek} />}
-      </div>
+              {isAdmin && <PlanActualExportBtn week={currentWeek} />}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Project picker modal (range mode) */}
       {projPickerOpen && (
@@ -983,7 +1002,7 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, label, year }: { type: string; week: Date; month?: Date; from?: string; to?: string; projectIds?: string; forceDisabled?: boolean; label: string; year?: number }) {
+function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, label, year, primary, className }: { type: string; week: Date; month?: Date; from?: string; to?: string; projectIds?: string; forceDisabled?: boolean; label: string; year?: number; primary?: boolean; className?: string }) {
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const disabled = forceDisabled || !!(from !== undefined && (!from || !to));
   const projQs = projectIds ? `&projectIds=${projectIds}` : "";
@@ -994,12 +1013,14 @@ function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, lab
     : month
     ? `/api/export?type=${type}&month=${fmt(startOfMonth(month))}`
     : `/api/export?type=${type}&week=${fmt(week)}`;
+  const base = primary ? "ges-btn-primary" : "ges-btn-secondary";
+  const size = className ?? "text-xs px-3 py-1.5";
+  const cls = `${base} ${size} whitespace-nowrap`;
   if (disabled) {
-    return <span className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap opacity-40 cursor-not-allowed">{label}</span>;
+    return <span className={`${cls} opacity-40 cursor-not-allowed`}>{label}</span>;
   }
   return (
-    <a href={href}
-      className="ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
+    <a href={href} className={cls}>
       {label}
     </a>
   );

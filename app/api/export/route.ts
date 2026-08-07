@@ -3,6 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
+import ExcelJS from "exceljs";
+
+import { setWorkbookMeta, addTitleBand, styleHeaderRow, styleGroupRow, styleSubtotalRow, COLORS } from "@/lib/export/theme";
+import {
+  buildProjectTree, buildEmployeeTree, buildProjectTaskTree, departmentBreakdown, sortByHoursDesc, EntryRow,
+} from "@/lib/export/aggregate";
+import {
+  writeProjectEmployeeTaskSheet, writeEmployeeProjectTaskSheet, writeProjectTaskSheet,
+  writeUtilizationSheet, writeMissingSheet, writeDashboardSheet, writeFlatTableSheet,
+  UtilizationRow, HRS_FMT,
+} from "@/lib/export/sheets";
 
 // Monday (UTC) of the week containing the given date
 function mondayOfUTC(d: Date): Date {
@@ -27,15 +38,57 @@ function weeksInMonthUTC(monthStart: Date): Date[] {
   }
   return weeks;
 }
-import * as XLSX from "xlsx";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DONE_STATUSES = ["submitted", "approved"];
 
 // ±13h tolerance window for backward-compat with Thailand UTC+7 stored dates
 function weekRange(weekStart: Date) {
-  const MS_13H = 13 * 60 * 60 * 1000;
   return { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) };
+}
+
+// Per-employee utilization for the period, plus the aggregate stats the Dashboard needs.
+async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeksCount: number, isMonth: boolean) {
+  const [allEmployees, timesheets] = await Promise.all([
+    prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
+    prisma.timesheet.findMany({
+      where: { weekStart: tsWeekFilter },
+      include: { employee: true, entries: { where: projEntryFilter } },
+    }),
+  ]);
+
+  const aggMap = new Map<string, { hrs: number; done: number; lastStatus: string }>();
+  for (const t of timesheets) {
+    const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, lastStatus: t.status };
+    a.hrs += t.entries.reduce((s, e) => s + e.totalHrs, 0);
+    if (DONE_STATUSES.includes(t.status)) a.done += 1;
+    a.lastStatus = t.status;
+    aggMap.set(t.employeeId, a);
+  }
+
+  const capacity = 40 * weeksCount;
+  const submittedIds = new Set(timesheets.filter((t) => DONE_STATUSES.includes(t.status)).map((t) => t.employeeId));
+
+  const rows: UtilizationRow[] = [];
+  const missing: { employeeId: string; name: string; department: string; position: string; status: string }[] = [];
+
+  for (const emp of allEmployees) {
+    const a = aggMap.get(emp.id);
+    const totalHrs = a?.hrs || 0;
+    const utilization = Math.round((totalHrs / capacity) * 100);
+    const status = !a ? "missing" : isMonth ? `${a.done}/${weeksCount} weeks` : a.lastStatus;
+    rows.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position, hours: totalHrs, utilization, status });
+    if (!submittedIds.has(emp.id)) {
+      const ts = timesheets.find((t) => t.employeeId === emp.id);
+      missing.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position, status: ts?.status || "missing" });
+    }
+  }
+
+  const avgUtilization = rows.length > 0 ? rows.reduce((s, r) => s + r.utilization, 0) / rows.length : 0;
+  const complianceRate = allEmployees.length > 0 ? (submittedIds.size / allEmployees.length) * 100 : 0;
+
+  return { rows, missing, avgUtilization, complianceRate, totalActive: allEmployees.length };
 }
 
 export async function GET(req: NextRequest) {
@@ -66,7 +119,6 @@ export async function GET(req: NextRequest) {
   let weeksCount = 1; // for utilization capacity (weeks × 40h)
 
   if (isRange) {
-    // Include every whole week (Mon–Sun) that overlaps [from, to]
     const first = mondayOfUTC(new Date(fromParam + "T00:00:00.000Z"));
     const last = mondayOfUTC(new Date(toParam + "T00:00:00.000Z"));
     weeksCount = Math.max(1, Math.round((last.getTime() - first.getTime()) / (7 * 86400000)) + 1);
@@ -79,7 +131,6 @@ export async function GET(req: NextRequest) {
     weeksCount = weeks.length;
     const first = weeks[0];
     const last = weeks[weeks.length - 1];
-    // weekStart (Monday) is stored ±13h; span first→last Monday inclusive
     tsWeekFilter = { gte: new Date(first.getTime() - MS_13H), lt: new Date(last.getTime() + MS_13H) };
     periodLabel = format(monthStart, "MMMM yyyy");
     periodKey = format(monthStart, "yyyy-MM");
@@ -92,11 +143,18 @@ export async function GET(req: NextRequest) {
     periodKey = format(weekStart, "yyyy-MM-dd");
   }
 
-  const wb = XLSX.utils.book_new();
+  const wb = new ExcelJS.Workbook();
+  setWorkbookMeta(wb);
   const weekLabel = periodLabel;
+  const generatedAt = format(new Date(), "dd/MM/yyyy HH:mm");
+  const subtitle = `Period: ${weekLabel}   •   Generated: ${generatedAt}`;
 
-  // Only export submitted or approved timesheets
-  const DONE_STATUSES = ["submitted", "approved"];
+  async function fetchEntries(): Promise<EntryRow[]> {
+    return prisma.timesheetEntry.findMany({
+      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
+      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
+    });
+  }
 
   if (type === "weekly") {
     const timesheets = await prisma.timesheet.findMany({
@@ -107,249 +165,92 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const rows: any[][] = [
-      [`GES E-Timesheet - ${isRange ? "Custom Range" : isMonth ? "Monthly" : "Weekly"} Report: ${weekLabel}`],
-      [],
-      ["Employee ID", "Employee Name", "Department", "Project No.", "Project Name", "Task Code", "Task Name", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total", "Status"],
-    ];
-
+    const rows: (string | number)[][] = [];
     for (const ts of timesheets) {
       for (const entry of ts.entries) {
         if (entry.totalHrs === 0) continue;
         rows.push([
-          ts.employee.employeeId,
-          ts.employee.name,
-          ts.employee.department,
-          entry.project.projectNumber,
-          entry.project.projectName,
-          entry.taskCode.code,
-          entry.taskCode.name,
-          entry.monHrs, entry.tueHrs, entry.wedHrs,
-          entry.thuHrs, entry.friHrs, entry.satHrs, entry.sunHrs,
-          entry.totalHrs,
-          ts.status,
+          ts.employee.employeeId, ts.employee.name, ts.employee.department,
+          entry.project.projectNumber, entry.project.projectName,
+          entry.taskCode.code, entry.taskCode.name,
+          entry.monHrs, entry.tueHrs, entry.wedHrs, entry.thuHrs, entry.friHrs, entry.satHrs, entry.sunHrs,
+          entry.totalHrs, ts.status,
         ]);
       }
     }
 
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 20 }, { wch: 12 }, { wch: 35 }, { wch: 8 }, { wch: 25 }, ...Array(8).fill({ wch: 6 }), { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, "Weekly Report");
-
-  } else if (type === "project") {
-    const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
-      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
-    });
-
-    // Group by project → employee (breakdown per person within each project)
-    type EmpRow = { employeeId: string; name: string; department: string; hours: number };
-    type ProjRow = { name: string; hours: number; employees: Map<string, EmpRow> };
-    const projectMap = new Map<string, ProjRow>();
-    for (const e of entries) {
-      if (e.totalHrs === 0) continue;
-      const key = e.project.projectNumber;
-      if (!projectMap.has(key)) {
-        projectMap.set(key, { name: e.project.projectName, hours: 0, employees: new Map() });
-      }
-      const proj = projectMap.get(key)!;
-      proj.hours += e.totalHrs;
-      const emp = e.timesheet.employee;
-      if (!proj.employees.has(emp.employeeId)) {
-        proj.employees.set(emp.employeeId, { employeeId: emp.employeeId, name: emp.name, department: emp.department, hours: 0 });
-      }
-      proj.employees.get(emp.employeeId)!.hours += e.totalHrs;
-    }
-
-    const rows: any[][] = [
-      [`GES E-Timesheet - Project Summary: ${weekLabel}`],
-      [],
-      ["Project No.", "Project Name", "Employee ID", "Employee Name", "Department", "Total Hours"],
-    ];
-
-    // Projects sorted by total hours (desc)
-    for (const [num, proj] of Array.from(projectMap.entries()).sort((a, b) => b[1].hours - a[1].hours)) {
-      // Project header row
-      rows.push([num, proj.name, "", "", `${proj.employees.size} คน`, proj.hours]);
-      // Employee breakdown (sorted by employeeId)
-      const sortedEmps = Array.from(proj.employees.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-      for (const emp of sortedEmps) {
-        rows.push(["", "", emp.employeeId, emp.name, emp.department, emp.hours]);
-      }
-      rows.push([]); // blank separator
-    }
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, "By Project");
-
-  } else if (type === "employee") {
-    const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
-      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
-    });
-
-    // Group by employee → project
-    type ProjRow = { number: string; name: string; hours: number };
-    type EmpRow = { employeeId: string; name: string; department: string; projects: Map<string, ProjRow>; total: number };
-    const empMap = new Map<string, EmpRow>();
-
-    for (const e of entries) {
-      if (e.totalHrs === 0) continue;
-      const emp = e.timesheet.employee;
-      if (!empMap.has(emp.employeeId)) {
-        empMap.set(emp.employeeId, { employeeId: emp.employeeId, name: emp.name, department: emp.department, projects: new Map(), total: 0 });
-      }
-      const empRow = empMap.get(emp.employeeId)!;
-      const pkey = e.project.projectNumber;
-      if (!empRow.projects.has(pkey)) {
-        empRow.projects.set(pkey, { number: e.project.projectNumber, name: e.project.projectName, hours: 0 });
-      }
-      empRow.projects.get(pkey)!.hours += e.totalHrs;
-      empRow.total += e.totalHrs;
-    }
-
-    const rows: any[][] = [
-      [`GES E-Timesheet - Summary by Employee: ${weekLabel}`],
-      [],
-      ["Employee ID", "Employee Name", "Department", "Project No.", "Project Name", "Total Hours"],
-    ];
-
-    const sortedEmps = Array.from(empMap.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-    for (const emp of sortedEmps) {
-      const sortedProjs = Array.from(emp.projects.values()).sort((a, b) => a.number.localeCompare(b.number));
-      for (const p of sortedProjs) {
-        rows.push([emp.employeeId, emp.name, emp.department, p.number, p.name, p.hours]);
-      }
-      // Employee subtotal
-      rows.push(["", "", "", "", "รวม", emp.total]);
-      rows.push([]); // blank separator
-    }
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 14 }, { wch: 40 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, "By Employee");
-
-  } else if (type === "task") {
-    const entries = await prisma.timesheetEntry.findMany({
-      where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
-      include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
-    });
-
-    // Group by project → task (how many hours each task consumed within a project)
-    type TaskRow = { code: string; name: string; hours: number; employees: Set<string> };
-    type ProjRow = { name: string; hours: number; tasks: Map<string, TaskRow> };
-    const projectMap = new Map<string, ProjRow>();
-    for (const e of entries) {
-      if (e.totalHrs === 0) continue;
-      const pkey = e.project.projectNumber;
-      if (!projectMap.has(pkey)) projectMap.set(pkey, { name: e.project.projectName, hours: 0, tasks: new Map() });
-      const proj = projectMap.get(pkey)!;
-      proj.hours += e.totalHrs;
-      const tkey = e.taskCode.code;
-      if (!proj.tasks.has(tkey)) proj.tasks.set(tkey, { code: e.taskCode.code, name: e.taskCode.name, hours: 0, employees: new Set() });
-      const task = proj.tasks.get(tkey)!;
-      task.hours += e.totalHrs;
-      task.employees.add(e.timesheet.employee.employeeId);
-    }
-
-    const rows: any[][] = [
-      [`GES E-Timesheet - Hours by Project & Task: ${weekLabel}`],
-      [],
-      ["Project No.", "Project Name", "Task Code", "Task Name", "Total Hours", "No. of Engineers"],
-    ];
-
-    // Projects sorted by total hours (desc)
-    for (const [num, proj] of Array.from(projectMap.entries()).sort((a, b) => b[1].hours - a[1].hours)) {
-      const projEmps = new Set<string>();
-      proj.tasks.forEach((t) => t.employees.forEach((id) => projEmps.add(id)));
-      // Project header row (project total + distinct engineers)
-      rows.push([num, proj.name, "", "", proj.hours, `${projEmps.size} คน`]);
-      // Task breakdown, most hours first
-      const sortedTasks = Array.from(proj.tasks.values()).sort((a, b) => b.hours - a.hours);
-      for (const t of sortedTasks) {
-        rows.push(["", "", t.code, t.name, t.hours, `${t.employees.size} คน`]);
-      }
-      rows.push([]); // blank separator
-    }
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 40 }, { wch: 10 }, { wch: 30 }, { wch: 12 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, ws, "By Task");
-
-  } else if (type === "utilization") {
-    const [allEmployees, timesheets] = await Promise.all([
-      prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
-      prisma.timesheet.findMany({
-        where: { weekStart: tsWeekFilter },
-        include: { employee: true, entries: { where: projEntryFilter } },
-      }),
-    ]);
-
-    // Aggregate per employee across all weeks in the period (a month has several timesheets per person)
-    const aggMap = new Map<string, { hrs: number; done: number; lastStatus: string }>();
-    for (const t of timesheets) {
-      const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, lastStatus: t.status };
-      a.hrs += t.entries.reduce((s, e) => s + e.totalHrs, 0);
-      if (DONE_STATUSES.includes(t.status)) a.done += 1;
-      a.lastStatus = t.status;
-      aggMap.set(t.employeeId, a);
-    }
-
-    const capacity = 40 * weeksCount; // weekly capacity × number of weeks
-    const rows: any[][] = [
-      [`GES E-Timesheet - Utilization Report: ${weekLabel}`],
-      [],
-      ["Employee ID", "Employee Name", "Department", "Position", "Total Hours", "Utilization %", "Status"],
-    ];
-
-    for (const emp of allEmployees) {
-      const a = aggMap.get(emp.id);
-      const totalHrs = a?.hrs || 0;
-      const utilization = Math.round((totalHrs / capacity) * 100);
-      // Weekly: the single timesheet's status. Monthly: how many weeks were submitted/approved.
-      const status = !a ? "missing" : isMonth ? `${a.done}/${weeksCount} weeks` : a.lastStatus;
-      rows.push([
-        emp.employeeId,
-        emp.name,
-        emp.department,
-        emp.position,
-        totalHrs,
-        `${utilization}%`,
-        status,
-      ]);
-    }
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, "Utilization");
-
-  } else if (type === "missing") {
-    const [allEmployees, timesheets] = await Promise.all([
-      prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
-      prisma.timesheet.findMany({ where: { weekStart: tsWeekFilter } }),
-    ]);
-
-    const submittedIds = new Set(
-      timesheets.filter((t) => DONE_STATUSES.includes(t.status)).map((t) => t.employeeId)
+    writeFlatTableSheet(
+      wb, "Weekly Report",
+      `GES E-Timesheet — ${isRange ? "Custom Range" : isMonth ? "Monthly" : "Weekly"} Detail Report`,
+      subtitle,
+      [
+        { header: "Employee ID", width: 12 }, { header: "Employee Name", width: 25 }, { header: "Department", width: 20 },
+        { header: "Project No.", width: 12 }, { header: "Project Name", width: 35 },
+        { header: "Task Code", width: 8 }, { header: "Task Name", width: 25 },
+        { header: "Mon", width: 7, numFmt: HRS_FMT }, { header: "Tue", width: 7, numFmt: HRS_FMT }, { header: "Wed", width: 7, numFmt: HRS_FMT },
+        { header: "Thu", width: 7, numFmt: HRS_FMT }, { header: "Fri", width: 7, numFmt: HRS_FMT }, { header: "Sat", width: 7, numFmt: HRS_FMT }, { header: "Sun", width: 7, numFmt: HRS_FMT },
+        { header: "Total", width: 12, numFmt: HRS_FMT }, { header: "Status", width: 14 },
+      ],
+      rows,
+      16
     );
 
-    const rows: any[][] = [
-      [`GES E-Timesheet - Missing Timesheet Report: ${weekLabel}`],
-      [],
-      ["Employee ID", "Employee Name", "Department", "Position", "Status"],
-    ];
+  } else if (type === "project") {
+    const entries = await fetchEntries();
+    const tree = buildProjectTree(entries);
+    writeProjectEmployeeTaskSheet(wb, "By Project", "GES E-Timesheet — Project Detail Report", subtitle, tree);
 
-    for (const emp of allEmployees) {
-      if (!submittedIds.has(emp.id)) {
-        const ts = timesheets.find((t) => t.employeeId === emp.id);
-        rows.push([emp.employeeId, emp.name, emp.department, emp.position, ts?.status || "missing"]);
-      }
-    }
+  } else if (type === "employee") {
+    const entries = await fetchEntries();
+    const tree = buildEmployeeTree(entries);
+    writeEmployeeProjectTaskSheet(wb, "By Employee", "GES E-Timesheet — Employee Detail Report", subtitle, tree);
 
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 12 }, { wch: 25 }, { wch: 22 }, { wch: 30 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, "Missing");
+  } else if (type === "task") {
+    const entries = await fetchEntries();
+    const tree = buildProjectTaskTree(entries);
+    writeProjectTaskSheet(wb, "By Task", "GES E-Timesheet — Hours by Project & Task", subtitle, tree);
+
+  } else if (type === "utilization") {
+    const { rows } = await computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth);
+    writeUtilizationSheet(wb, "GES E-Timesheet — Utilization Report", subtitle, rows);
+
+  } else if (type === "missing") {
+    const { missing } = await computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth);
+    writeMissingSheet(wb, "GES E-Timesheet — Missing Timesheet Report", subtitle, missing);
+
+  } else if (type === "executive") {
+    const [entries, util] = await Promise.all([
+      fetchEntries(),
+      computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth),
+    ]);
+
+    const projTree = buildProjectTree(entries);
+    const empTree = buildEmployeeTree(entries);
+    const taskTree = buildProjectTaskTree(entries);
+    const deptHours = departmentBreakdown(entries);
+
+    const totalHours = entries.reduce((s, e) => s + e.totalHrs, 0);
+    const topProjects = sortByHoursDesc(projTree).slice(0, 10).map(([num, p]) => [num, { name: p.name, hours: p.hours }] as [string, { name: string; hours: number }]);
+    const topEmployees = sortByHoursDesc(empTree).slice(0, 10).map(([id, e]) => [id, { name: e.name, department: e.department, hours: e.hours }] as [string, { name: string; department: string; hours: number }]);
+
+    writeDashboardSheet(wb, {
+      periodLabel: weekLabel,
+      totalHours,
+      totalProjects: projTree.size,
+      totalEmployees: empTree.size,
+      avgUtilization: util.avgUtilization,
+      complianceRate: util.complianceRate,
+      missingCount: util.missing.length,
+      topProjects,
+      topEmployees,
+      deptHours: Array.from(deptHours.entries()),
+    });
+    writeProjectEmployeeTaskSheet(wb, "By Project", "By Project — Employee & Task Detail", subtitle, projTree);
+    writeEmployeeProjectTaskSheet(wb, "By Employee", "By Employee — Project & Task Detail", subtitle, empTree);
+    writeProjectTaskSheet(wb, "By Task", "Hours by Project & Task", subtitle, taskTree);
+    writeUtilizationSheet(wb, "Utilization Report", subtitle, util.rows);
+    writeMissingSheet(wb, "Missing Timesheet Report", subtitle, util.missing);
+
   } else if (type === "plan-actual") {
     // Admin only
     if (role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
@@ -359,7 +260,6 @@ export async function GET(req: NextRequest) {
     const months = [1,2,3,4,5,6,7,8,9,10,11,12];
     const LEAVE_CODES = ["1001","1002","1003","1004","1005"];
 
-    // optional project filter
     const projIdsParam = searchParams.get("projectIds");
     const projIdFilter = projIdsParam ? projIdsParam.split(",").filter(Boolean) : null;
     const projWhere = projIdFilter ? { projectId: { in: projIdFilter } } : {};
@@ -393,9 +293,8 @@ export async function GET(req: NextRequest) {
 
     const MM_HRS = 176; // 1 MM = 176 ชม (มาตรฐาน GES)
     const toMM = (hrs: number) => hrs > 0 ? Math.round((hrs / MM_HRS) * 100) / 100 : 0;
-    const fmtMM = (hrs: number) => hrs > 0 ? toMM(hrs) : "–";
+    const fmtMM = (hrs: number): number | string => hrs > 0 ? toMM(hrs) : "–";
 
-    // Build structure: projectId → employeeId → monthIndex → { plan, actual }
     type EmpData = { employeeId: string; name: string; dept: string; position: string; months: { plan: number; actual: number }[] };
     type ProjData = { num: string; name: string; emps: Map<string, EmpData> };
     const projMap = new Map<string, ProjData>();
@@ -409,14 +308,12 @@ export async function GET(req: NextRequest) {
       return proj.emps.get(empId)!;
     };
 
-    // Plans
     for (const p of plans) {
       const proj = getProj(p.projectId, p.project.projectNumber, p.project.projectName);
       const emp  = getEmp(proj, p.employee.id, p.employee.employeeId, p.employee.name, p.employee.department, p.employee.position ?? "");
       emp.months[p.month - 1].plan += p.plannedHrs;
     }
 
-    // Actuals (only within the year)
     for (const e of rawEntries) {
       if (e.totalHrs === 0) continue;
       const d = new Date(e.timesheet.weekStart);
@@ -428,9 +325,17 @@ export async function GET(req: NextRequest) {
       emp.months[m - 1].actual += e.totalHrs;
     }
 
-    // Build header rows (Plan/Actual in MM)
-    const headerMonth = ["โครงการ / พนักงาน", "รหัสพนักงาน", "ตำแหน่ง", "แผนก"];
-    const headerSub   = ["", "", "", ""];
+    const colCount = 4 + months.length * 2 + 3;
+    const ws = wb.addWorksheet(`Plan vs Actual ${year}`, { views: [{ state: "frozen", xSplit: 4, ySplit: 5 }] });
+    ws.columns = [
+      { width: 28 }, { width: 13 }, { width: 28 }, { width: 18 },
+      ...Array(months.length * 2).fill({ width: 10 }),
+      { width: 14 }, { width: 14 }, { width: 10 },
+    ];
+    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${year}`, `หน่วย: Man-Month (176 ชม.)   •   Generated: ${generatedAt}   •   Admin only`, colCount);
+
+    const headerMonth: (string)[] = ["โครงการ / พนักงาน", "รหัสพนักงาน", "ตำแหน่ง", "แผนก"];
+    const headerSub: string[] = ["", "", "", ""];
     for (const m of months) {
       headerMonth.push(`${MONTH_NAMES[m-1]} ${year}`, "");
       headerSub.push("Plan (MM)", "Actual (MM)");
@@ -438,77 +343,82 @@ export async function GET(req: NextRequest) {
     headerMonth.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
     headerSub.push("", "", "");
 
-    const rows: any[][] = [
-      [`GES E-Timesheet — Plan vs Actual ${year}  (หน่วย: Man-Month = 176 ชม)`],
-      [`Export: ${format(new Date(), "dd/MM/yyyy HH:mm")}  (Admin only)`],
-      [],
-      headerMonth,
-      headerSub,
-    ];
+    const headerRow1 = 3, headerRow2 = 4;
+    ws.getRow(headerRow1).values = headerMonth;
+    ws.getRow(headerRow2).values = headerSub;
+    for (const m of months) {
+      const startCol = 5 + (m - 1) * 2;
+      ws.mergeCells(headerRow1, startCol, headerRow1, startCol + 1);
+    }
+    ws.mergeCells(headerRow1, 1, headerRow2, 1);
+    ws.mergeCells(headerRow1, 2, headerRow2, 2);
+    ws.mergeCells(headerRow1, 3, headerRow2, 3);
+    ws.mergeCells(headerRow1, 4, headerRow2, 4);
+    const sumStart = 5 + months.length * 2;
+    ws.mergeCells(headerRow1, sumStart, headerRow2, sumStart);
+    ws.mergeCells(headerRow1, sumStart + 1, headerRow2, sumStart + 1);
+    ws.mergeCells(headerRow1, sumStart + 2, headerRow2, sumStart + 2);
+    styleHeaderRow(ws, headerRow1, colCount);
+    styleHeaderRow(ws, headerRow2, colCount);
+    ws.views = [{ state: "frozen", xSplit: 4, ySplit: headerRow2 }];
 
-    // Sort projects by projectNumber
+    let r = headerRow2 + 1;
     const sortedProjs = Array.from(projMap.values()).sort((a, b) => a.num.localeCompare(b.num));
 
     for (const proj of sortedProjs) {
-      // Project header
-      rows.push([`${proj.num} — ${proj.name}`, "", "", "", ...Array(months.length * 2 + 3).fill("")]);
+      ws.getRow(r).values = [`${proj.num} — ${proj.name}`];
+      styleGroupRow(ws, r, colCount);
+      ws.mergeCells(r, 1, r, colCount);
+      r++;
 
       const projMonthTotals = months.map(() => ({ plan: 0, actual: 0 }));
-
-      // Employee rows sorted by employeeId
       const sortedEmps = Array.from(proj.emps.values()).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
       for (const emp of sortedEmps) {
-        const row: any[] = [emp.name, emp.employeeId, emp.position, emp.dept];
+        const row: (string | number)[] = [emp.name, emp.employeeId, emp.position, emp.dept];
         let totalPlan = 0, totalActual = 0;
         for (let mi = 0; mi < 12; mi++) {
           const { plan, actual } = emp.months[mi];
           row.push(fmtMM(plan), fmtMM(actual));
-          totalPlan   += plan;
-          totalActual += actual;
-          projMonthTotals[mi].plan   += plan;
-          projMonthTotals[mi].actual += actual;
+          totalPlan += plan; totalActual += actual;
+          projMonthTotals[mi].plan += plan; projMonthTotals[mi].actual += actual;
         }
-        const variance = totalPlan > 0 ? `${Math.round(((totalActual - totalPlan) / totalPlan) * 100)}%` : "–";
-        row.push(fmtMM(totalPlan), fmtMM(totalActual), variance);
-        rows.push(row);
+        const variance = totalPlan > 0 ? Math.round(((totalActual - totalPlan) / totalPlan) * 100) : null;
+        row.push(fmtMM(totalPlan), fmtMM(totalActual), variance !== null ? `${variance}%` : "–");
+        ws.getRow(r).values = row;
+        for (let c = 1; c <= colCount; c++) {
+          const cell = ws.getRow(r).getCell(c);
+          cell.border = { top: { style: "hair", color: { argb: COLORS.border } }, bottom: { style: "hair", color: { argb: COLORS.border } } };
+          cell.font = { size: 9.5, color: { argb: COLORS.textDark } };
+        }
+        if (variance !== null) {
+          const varCell = ws.getRow(r).getCell(colCount);
+          varCell.font = { size: 9.5, bold: true, color: { argb: variance < 0 ? COLORS.danger : COLORS.success } };
+        }
+        r++;
       }
 
-      // Project subtotal row (MM)
-      const subRow: any[] = ["", "รวมโครงการ", "", ""];
+      const subRow: (string | number)[] = ["", "รวมโครงการ", "", ""];
       let ptPlan = 0, ptActual = 0;
       for (const m of projMonthTotals) {
         subRow.push(fmtMM(m.plan), fmtMM(m.actual));
         ptPlan += m.plan; ptActual += m.actual;
       }
-      const ptVariance = ptPlan > 0 ? `${Math.round(((ptActual - ptPlan) / ptPlan) * 100)}%` : "–";
-      subRow.push(fmtMM(ptPlan), fmtMM(ptActual), ptVariance);
-      rows.push(subRow);
-      rows.push([]); // blank separator
+      const ptVariance = ptPlan > 0 ? Math.round(((ptActual - ptPlan) / ptPlan) * 100) : null;
+      subRow.push(fmtMM(ptPlan), fmtMM(ptActual), ptVariance !== null ? `${ptVariance}%` : "–");
+      ws.getRow(r).values = subRow;
+      styleSubtotalRow(ws, r, colCount);
+      r++;
+      r++; // blank separator
     }
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    // Column widths: name, empId, position, dept + 2 cols per month + 3 summary cols
-    ws["!cols"] = [
-      { wch: 28 }, { wch: 13 }, { wch: 28 }, { wch: 18 },
-      ...Array(24).fill({ wch: 10 }),
-      { wch: 14 }, { wch: 14 }, { wch: 10 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, `Plan vs Actual ${year}`);
-
-    const buf2 = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-    const fname2 = `GES_PlanActual_${year}_${format(new Date(), "yyyyMMdd")}.xlsx`;
-    return new NextResponse(buf2, {
-      headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${fname2}"`,
-      },
-    });
   }
 
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  const filename = `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
+  const filename = type === "plan-actual"
+    ? `GES_PlanActual_${searchParams.get("year") || new Date().getFullYear()}_${format(new Date(), "yyyyMMdd")}.xlsx`
+    : `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
-  return new NextResponse(buf, {
+  const buf = await wb.xlsx.writeBuffer();
+
+  return new NextResponse(buf as any, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${filename}"`,
