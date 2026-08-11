@@ -16,6 +16,16 @@ export const TASK_CATEGORIES = [
   "Unassigned",
 ] as const;
 
+// โครงการ Overhead / Non-Project
+// ข้อมูลจริงบน production ใช้ projectType = "overhead" (projectNumber = "10000")
+// ส่วน seed/ตัวอย่างเดิมใช้ "support" หรือ projectNumber ขึ้นต้นด้วย "GES-OH" → รองรับทั้งหมด
+export function isOverheadProject(p: { projectNumber?: string; projectType?: string } | null | undefined): boolean {
+  if (!p) return false;
+  const type = (p.projectType ?? "").toLowerCase();
+  if (type === "overhead" || type === "support") return true;
+  return (p.projectNumber ?? "").toUpperCase().startsWith("GES-OH");
+}
+
 export const OH_CATEGORIES = new Set([
   "Holiday",
   "Training",

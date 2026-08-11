@@ -28,3 +28,6 @@ yarn-debug.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+# audit output
+OH-wrong-project-report.xlsx
