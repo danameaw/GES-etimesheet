@@ -31,3 +31,5 @@ next-env.d.ts
 
 # audit output
 OH-wrong-project-report.xlsx
+oh-fix-*.json
+OH-fixed-*.xlsx
