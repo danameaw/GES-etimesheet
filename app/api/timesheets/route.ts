@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
+import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
 
 // Parse a week param that may be "yyyy-MM-dd" (new) or ISO string (legacy)
 function parseWeekStart(param: string): Date {
@@ -79,6 +80,40 @@ export async function POST(req: NextRequest) {
   const weDate = weekEnd.length === 10
     ? new Date(weekEnd + "T00:00:00.000Z")
     : new Date(weekEnd);
+
+  // ── Lock: task code กลุ่ม OH ต้องลงใต้ Project Overhead เท่านั้น ──
+  // ตรวจก่อนแตะข้อมูลเดิม เพราะขั้นตอนบันทึกจะลบ entries ทั้งหมดแล้วสร้างใหม่
+  if (Array.isArray(entries) && entries.length > 0) {
+    const [projs, tasks] = await Promise.all([
+      prisma.project.findMany({
+        where: { id: { in: Array.from(new Set(entries.map((e: any) => e.projectId as string))) } },
+        select: { id: true, projectNumber: true, projectType: true },
+      }),
+      prisma.taskCode.findMany({
+        where: { id: { in: Array.from(new Set(entries.map((e: any) => e.taskCodeId as string))) } },
+        select: { id: true, code: true, category: true },
+      }),
+    ]);
+    const projById = new Map(projs.map((p) => [p.id, p]));
+    const taskById = new Map(tasks.map((t) => [t.id, t]));
+
+    const bad = entries.filter((e: any) => {
+      const task = taskById.get(e.taskCodeId);
+      return task && OH_CATEGORIES.has(task.category) && !isOverheadProject(projById.get(e.projectId));
+    });
+
+    if (bad.length > 0) {
+      const ohProject = await prisma.project.findFirst({
+        where: { OR: [{ projectType: "overhead" }, { projectType: "support" }] },
+        select: { projectNumber: true, projectName: true },
+      });
+      const codes = Array.from(new Set(bad.map((e: any) => taskById.get(e.taskCodeId)?.code))).join(", ");
+      const target = ohProject ? `${ohProject.projectNumber} ${ohProject.projectName}` : "Overhead / Non-Project";
+      return NextResponse.json({
+        error: `Task OH (${codes}) ต้องลงใต้ Project ${target} เท่านั้น`,
+      }, { status: 400 });
+    }
+  }
 
   // Find existing timesheet
   let timesheet = await prisma.timesheet.findFirst({

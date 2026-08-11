@@ -210,6 +210,14 @@ export default function TimesheetPage() {
             updated.projectId = ohProject.id;
           }
         }
+        // ถ้าเปลี่ยนไป Project ที่ไม่ใช่ OH แต่ task เดิมเป็น OH → ล้าง task ทิ้ง (กันข้อมูลเก่า/ค้าง)
+        if (field === "projectId") {
+          const task = taskCodes.find((t) => t.id === updated.taskCodeId);
+          const newProject = projects.find((p) => p.id === value);
+          if (task && OH_CATEGORIES.has(task.category) && !isOverheadProject(newProject)) {
+            updated.taskCodeId = "";
+          }
+        }
         return updated;
       })
     );
@@ -228,6 +236,23 @@ export default function TimesheetPage() {
     const validRows = rows.filter((r) => r.projectId && r.taskCodeId);
     if (validRows.length === 0) {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
+      return;
+    }
+    // OH task ต้องอยู่ใต้ Project Overhead เท่านั้น
+    const ohMismatch = validRows.filter((r) => {
+      const task = taskCodes.find((t) => t.id === r.taskCodeId);
+      return task && OH_CATEGORIES.has(task.category)
+        && !isOverheadProject(projects.find((p) => p.id === r.projectId));
+    });
+    if (ohMismatch.length > 0) {
+      const codes = ohMismatch
+        .map((r) => taskCodes.find((t) => t.id === r.taskCodeId)?.code)
+        .filter(Boolean)
+        .join(", ");
+      setMessage({
+        type: "error",
+        text: `Task OH (${codes}) ต้องลงใต้ Project ${ohProject ? `${ohProject.projectNumber} ${ohProject.projectName}` : "Overhead / Non-Project"} เท่านั้น กรุณาแก้ไขก่อนบันทึก`,
+      });
       return;
     }
     if (action === "submit" && totalWeekHrs === 0) {
@@ -344,7 +369,10 @@ export default function TimesheetPage() {
 
       {/* ── Leave / Holiday Code Reference — แสดงทุกสัปดาห์ ── */}
       <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-        <p className="text-xs font-semibold text-blue-800 mb-2">📋 กรณีลา / วันหยุด ให้ลง Code ต่อไปนี้ (Project: GES-OH)</p>
+        <p className="text-xs font-semibold text-blue-800 mb-2">
+          📋 กรณีลา / วันหยุด ให้ลง Code ต่อไปนี้ (Project:{" "}
+          {ohProject ? `${ohProject.projectNumber} ${ohProject.projectName}` : "Overhead / Non-Project"})
+        </p>
         <div className="flex flex-wrap gap-x-6 gap-y-1">
           {[
             { code: "1001", name: "Holidays" },
@@ -445,7 +473,7 @@ export default function TimesheetPage() {
                     <select
                       value={row.projectId}
                       onChange={(e) => updateRow(row.id, "projectId", e.target.value)}
-                      disabled={!canEdit || rowIsOH}
+                      disabled={!canEdit || (rowIsOH && rowProjectIsOH)}
                       className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${rowIsOH ? "border-orange-200 text-orange-700" : "border-gray-200"}`}
                     >
                       <option value="">-- Select Project --</option>
@@ -455,7 +483,12 @@ export default function TimesheetPage() {
                         </option>
                       ))}
                     </select>
-                    {rowIsOH && <p className="text-xs text-orange-500 mt-0.5">🏢 OH Task</p>}
+                    {rowIsOH && (rowProjectIsOH
+                      ? <p className="text-xs text-orange-500 mt-0.5">🏢 OH Task</p>
+                      : <p className="text-xs text-red-600 mt-0.5">
+                          ⚠️ OH Task ต้องลง Project {ohProject ? ohProject.projectNumber : "Overhead"}
+                        </p>
+                    )}
                   </td>
 
                   {/* Task code selector — grouped: Project Tasks / OH Tasks */}
