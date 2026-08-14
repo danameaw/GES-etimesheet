@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { format, addWeeks, subWeeks, startOfWeek } from "date-fns";
 import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
@@ -49,17 +49,52 @@ const DAYS: { key: keyof TimesheetRow; label: string; short: string }[] = [
 ];
 
 let rowCounter = 0;
+function newRowId() {
+  return `row-${++rowCounter}`;
+}
 function newRow(): TimesheetRow {
   return {
-    id: `row-${++rowCounter}`,
+    id: newRowId(),
     projectId: "",
     taskCodeId: "",
     monHrs: 0, tueHrs: 0, wedHrs: 0, thuHrs: 0, friHrs: 0, satHrs: 0, sunHrs: 0,
   };
 }
 
+// ── ร่างอัตโนมัติในเครื่อง (กันข้อมูลหายตอนยังไม่ได้กด Save) ──
+const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // เก็บร่างในเครื่อง 30 วัน
+
+// แถวที่ "มีข้อมูล" เท่านั้น — แถวว่างเปล่าไม่นับว่ามีการแก้ไข
+function meaningfulRows(rows: TimesheetRow[]) {
+  return rows.filter(
+    (r) => r.projectId || r.taskCodeId || DAYS.some((d) => Number(r[d.key]) > 0)
+  );
+}
+
+// ลายเซ็นข้อมูลในตาราง (ไม่รวม id) ไว้เทียบว่ามีการแก้ไขที่ยังไม่ได้บันทึกหรือไม่
+function rowsSignature(rows: TimesheetRow[]): string {
+  return JSON.stringify(meaningfulRows(rows).map(({ id: _id, ...rest }) => rest));
+}
+
+function readDraft(key: string): TimesheetRow[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.rows)) return null;
+    if (Date.now() - (parsed.savedAt || 0) > DRAFT_TTL_MS) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    // ออก id ใหม่เสมอ กัน id ชนกับแถวที่สร้างหลังรีเฟรชหน้า
+    return (parsed.rows as TimesheetRow[]).map((r) => ({ ...r, id: newRowId() }));
+  } catch {
+    return null;
+  }
+}
+
 export default function TimesheetPage() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [projects, setProjects]       = useState<Project[]>([]);
   const [taskCodes, setTaskCodes]     = useState<TaskCode[]>([]);
@@ -68,6 +103,12 @@ export default function TimesheetPage() {
   const [timesheetStatus, setTimesheetStatus] = useState<string>("missing");
   const [saving, setSaving]           = useState(false);
   const [message, setMessage]         = useState<{ type: "success" | "error" | "warn"; text: string } | null>(null);
+
+  // ── สถานะร่างอัตโนมัติ ──
+  const [savedSig, setSavedSig]   = useState("");        // ลายเซ็นข้อมูลชุดล่าสุดที่อยู่บนระบบแล้ว
+  const [loadedKey, setLoadedKey] = useState<string | null>(null); // ร่างที่ rows ปัจจุบันสังกัดอยู่
+  const [restored, setRestored]   = useState(false);     // เพิ่งกู้ร่างที่ยังไม่ได้บันทึกกลับมา
+  const loadSeq                   = useRef(0);
 
   // Favorites state
   interface Favorite {
@@ -83,6 +124,11 @@ export default function TimesheetPage() {
 
   const weekEnd = new Date(currentWeek);
   weekEnd.setDate(weekEnd.getDate() + 6);
+
+  const weekKey     = format(currentWeek, "yyyy-MM-dd");
+  const employeeKey = (session?.user as any)?.id || null;
+  // key ของร่างในเครื่อง — แยกตามคน + สัปดาห์ (null = ยังไม่รู้ว่าใคร → ยังไม่เก็บร่าง)
+  const draftKey    = employeeKey ? `ges-ts-draft:${employeeKey}:${weekKey}` : null;
 
   const weekLabel = `${format(currentWeek, "dd MMM")} – ${format(weekEnd, "dd MMM yyyy")}`;
 
@@ -119,36 +165,104 @@ export default function TimesheetPage() {
 
   // Fetch timesheet + holidays for current week
   const loadTimesheet = useCallback(async () => {
-    const weekStr = format(currentWeek, "yyyy-MM-dd");
-    setMessage(null); // Clear any stale messages when loading a new week
-    const res = await fetch(`/api/timesheets?week=${weekStr}`);
-    const data = await res.json();
+    // รอ session ให้พร้อมก่อน ไม่งั้นจะโหลดสองรอบแล้วทับข้อมูลที่กำลังพิมพ์
+    if (sessionStatus !== "authenticated") return;
+    const seq = ++loadSeq.current;
+    setLoadedKey(null);  // กันไม่ให้เขียนร่างข้ามสัปดาห์ระหว่างรอโหลด
+    setRestored(false);
+    setMessage(null);    // Clear any stale messages when loading a new week
+
+    let data: any;
+    try {
+      const res = await fetch(`/api/timesheets?week=${weekKey}`);
+      data = await res.json();
+    } catch {
+      if (seq === loadSeq.current) {
+        setMessage({ type: "error", text: "โหลดข้อมูลไม่สำเร็จ — กรุณารีเฟรชหน้าก่อนกรอกข้อมูล" });
+      }
+      return;
+    }
+    if (seq !== loadSeq.current) return; // เปลี่ยนสัปดาห์ระหว่างรอ → ทิ้งผลลัพธ์เก่า
 
     setHolidays(data.holidays || []);
 
+    // ── ข้อมูลชุดที่อยู่บนระบบ ──
+    let serverRows: TimesheetRow[] = [];
+    let status = "missing";
     if (data.timesheet) {
-      const hasEntries = data.timesheet.entries.some((e: any) =>
+      const entries: any[] = data.timesheet.entries || [];
+      const hasHours = entries.some((e) =>
         (e.monHrs + e.tueHrs + e.wedHrs + e.thuHrs + e.friHrs + e.satHrs + e.sunHrs) > 0
       );
-      setTimesheetStatus(hasEntries ? data.timesheet.status : "missing");
-      if (hasEntries) {
-        setRows(data.timesheet.entries.map((e: any) => ({
-          id: e.id,
-          projectId: e.projectId,
-          taskCodeId: e.taskCodeId,
-          monHrs: e.monHrs, tueHrs: e.tueHrs, wedHrs: e.wedHrs,
-          thuHrs: e.thuHrs, friHrs: e.friHrs, satHrs: e.satHrs, sunHrs: e.sunHrs,
-        })));
-      } else {
-        setRows([newRow()]);
-      }
-    } else {
-      setTimesheetStatus("missing");
-      setRows([newRow()]);
+      status = hasHours ? data.timesheet.status : "missing";
+      // เก็บทุกแถวที่บันทึกไว้ แม้ชั่วโมงยังเป็น 0 (เดิมโดนทิ้ง → Project/Task ที่เลือกไว้หาย)
+      serverRows = entries.map((e) => ({
+        id: e.id,
+        projectId: e.projectId,
+        taskCodeId: e.taskCodeId,
+        monHrs: e.monHrs, tueHrs: e.tueHrs, wedHrs: e.wedHrs,
+        thuHrs: e.thuHrs, friHrs: e.friHrs, satHrs: e.satHrs, sunHrs: e.sunHrs,
+      }));
     }
-  }, [currentWeek]);
+    const baseRows = serverRows.length > 0 ? serverRows : [newRow()];
+    const baseSig  = rowsSignature(baseRows);
+
+    // ── กู้ร่างที่พิมพ์ค้างไว้แต่ยังไม่ได้กด Save ──
+    let finalRows  = baseRows;
+    let didRestore = false;
+    if (draftKey && status !== "submitted" && status !== "approved") {
+      const draft = readDraft(draftKey);
+      if (draft && rowsSignature(draft) !== baseSig) {
+        finalRows  = draft;
+        didRestore = true;
+      }
+    }
+
+    setTimesheetStatus(status);
+    setRows(finalRows);
+    setSavedSig(baseSig);
+    setRestored(didRestore);
+    setLoadedKey(draftKey);
+  }, [weekKey, draftKey, sessionStatus]);
 
   useEffect(() => { loadTimesheet(); }, [loadTimesheet]);
+
+  const currentSig = rowsSignature(rows);
+  const isDirty    = loadedKey !== null && currentSig !== savedSig;
+
+  // เก็บร่างลงเครื่องทุกครั้งที่พิมพ์ — เฉพาะเมื่อ rows สังกัดสัปดาห์ที่โหลดเสร็จแล้วเท่านั้น
+  useEffect(() => {
+    if (!draftKey || draftKey !== loadedKey) return;
+    try {
+      if (currentSig === savedSig) localStorage.removeItem(draftKey);
+      else localStorage.setItem(draftKey, JSON.stringify({ savedAt: Date.now(), rows }));
+    } catch {
+      // localStorage เต็ม/ถูกปิด — ข้ามไป ไม่ให้กระทบการกรอกข้อมูล
+    }
+  }, [rows, currentSig, savedSig, draftKey, loadedKey]);
+
+  // เตือนก่อนปิด/รีเฟรชหน้าเมื่อยังไม่ได้บันทึก
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  function goToWeek(next: Date) {
+    if (isDirty && !window.confirm(
+      "สัปดาห์นี้มีข้อมูลที่ยังไม่ได้กด Save Draft\n" +
+      "ระบบจะเก็บร่างไว้ในเครื่องให้ และจะแสดงกลับมาเมื่อเปิดสัปดาห์นี้อีกครั้ง\n\n" +
+      "ต้องการเปลี่ยนสัปดาห์เลยหรือไม่?"
+    )) return;
+    setCurrentWeek(next);
+  }
+
+  function discardDraft() {
+    if (!window.confirm("ทิ้งข้อมูลที่กู้คืนมา แล้วใช้ข้อมูลล่าสุดที่บันทึกไว้ในระบบแทน?")) return;
+    if (draftKey) { try { localStorage.removeItem(draftKey); } catch {} }
+    loadTimesheet();
+  }
 
   // Load favorites once on mount
   useEffect(() => {
@@ -280,10 +394,23 @@ export default function TimesheetPage() {
       const data = await res.json();
       if (res.ok) {
         setTimesheetStatus(data.status);
-        setMessage({
-          type: "success",
-          text: action === "submit" ? "Timesheet submitted successfully!" : "Draft saved.",
-        });
+        // ข้อมูลขึ้นระบบแล้ว → ล้างร่างในเครื่อง
+        setSavedSig(rowsSignature(rows));
+        setRestored(false);
+        if (draftKey) { try { localStorage.removeItem(draftKey); } catch {} }
+
+        const skipped = meaningfulRows(rows).length - validRows.length;
+        setMessage(
+          skipped > 0
+            ? {
+                type: "warn",
+                text: `${action === "submit" ? "Submit" : "บันทึกร่าง"}สำเร็จ — แต่มี ${skipped} แถวที่ยังไม่ได้ถูกบันทึก เพราะยังไม่ได้เลือก Project หรือ Task Code ครบ`,
+              }
+            : {
+                type: "success",
+                text: action === "submit" ? "Timesheet submitted successfully!" : "Draft saved.",
+              }
+        );
       } else {
         setMessage({ type: "error", text: data.error || "Failed to save." });
       }
@@ -309,13 +436,13 @@ export default function TimesheetPage() {
 
         {/* Week navigation */}
         <div className="flex items-center gap-2">
-          <button onClick={() => setCurrentWeek((w) => subWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← Prev</button>
+          <button onClick={() => goToWeek(subWeeks(currentWeek, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">← Prev</button>
           <div className="text-center min-w-[200px]">
             <p className="font-semibold text-gray-800 text-sm">{weekLabel}</p>
             <p className="text-xs text-gray-400">Week {format(currentWeek, "w, yyyy")}</p>
           </div>
-          <button onClick={() => setCurrentWeek((w) => addWeeks(w, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">Next →</button>
-          <button onClick={() => setCurrentWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">Today</button>
+          <button onClick={() => goToWeek(addWeeks(currentWeek, 1))} className="ges-btn-secondary px-3 py-1.5 text-sm">Next →</button>
+          <button onClick={() => goToWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="text-xs text-blue-600 hover:underline ml-1">Today</button>
         </div>
 
         {/* Status badge */}
@@ -389,6 +516,31 @@ export default function TimesheetPage() {
           ))}
         </div>
       </div>
+
+      {/* ── กู้ร่างที่ยังไม่ได้บันทึก ── */}
+      {restored && (
+        <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-900 border border-amber-300 flex items-start gap-2">
+          <span>💾</span>
+          <div className="flex-1">
+            <p className="font-semibold">กู้คืนข้อมูลที่ยังไม่ได้บันทึกของสัปดาห์นี้ให้แล้ว</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              ข้อมูลนี้ยังอยู่แค่ในเครื่องของคุณ — กรุณากด <span className="font-semibold">Save Draft</span> หรือ{" "}
+              <span className="font-semibold">Submit Timesheet</span> เพื่อบันทึกขึ้นระบบ
+            </p>
+          </div>
+          <button onClick={discardDraft} className="text-xs text-amber-700 underline whitespace-nowrap hover:text-amber-900">
+            ใช้ข้อมูลในระบบแทน
+          </button>
+        </div>
+      )}
+
+      {/* ── ยังไม่ได้บันทึกขึ้นระบบ ── */}
+      {!restored && isDirty && canEdit && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg text-sm bg-orange-50 text-orange-800 border border-orange-200 flex items-center gap-2">
+          <span className="text-orange-500">●</span>
+          <span>มีการแก้ไขที่ยังไม่ได้บันทึกขึ้นระบบ — อย่าลืมกด Save Draft</span>
+        </div>
+      )}
 
       {/* Message */}
       {message && (
@@ -609,7 +761,10 @@ export default function TimesheetPage() {
         </div>
 
         {canEdit && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
+            {isDirty && (
+              <span className="text-xs text-orange-600 font-medium whitespace-nowrap">● ยังไม่ได้บันทึก</span>
+            )}
             <button onClick={() => handleSave("save")} disabled={saving} className="ges-btn-secondary">
               {saving ? "Saving…" : "Save Draft"}
             </button>

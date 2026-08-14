@@ -129,49 +129,62 @@ export async function POST(req: NextRequest) {
 
   const status = action === "submit" ? "submitted" : "draft";
 
-  if (timesheet) {
-    await prisma.timesheetEntry.deleteMany({ where: { timesheetId: timesheet.id } });
-    timesheet = await prisma.timesheet.update({
-      where: { id: timesheet.id },
-      data: {
-        weekStart: wsDate,
-        weekEnd:   weDate,
-        status,
-        submittedAt: action === "submit" ? new Date() : null,
-        updatedAt:   new Date(),
-      },
-    });
-  } else {
-    timesheet = await prisma.timesheet.create({
-      data: {
-        employeeId: employeeDbId,
-        weekStart:  wsDate,
-        weekEnd:    weDate,
-        status,
-        submittedAt: action === "submit" ? new Date() : null,
-      },
-    });
-  }
+  const entryData = (entries || []).map((e: any) => ({
+    projectId:  e.projectId,
+    taskCodeId: e.taskCodeId,
+    monHrs: e.monHrs || 0,
+    tueHrs: e.tueHrs || 0,
+    wedHrs: e.wedHrs || 0,
+    thuHrs: e.thuHrs || 0,
+    friHrs: e.friHrs || 0,
+    satHrs: e.satHrs || 0,
+    sunHrs: e.sunHrs || 0,
+    totalHrs:
+      (e.monHrs || 0) + (e.tueHrs || 0) + (e.wedHrs || 0) +
+      (e.thuHrs || 0) + (e.friHrs || 0) + (e.satHrs || 0) + (e.sunHrs || 0),
+  }));
 
-  // Create entries (holiday fields already validated to be 0)
-  if (entries && entries.length > 0) {
-    await prisma.timesheetEntry.createMany({
-      data: entries.map((e: any) => ({
-        timesheetId: timesheet!.id,
-        projectId:   e.projectId,
-        taskCodeId:  e.taskCodeId,
-        monHrs: e.monHrs || 0,
-        tueHrs: e.tueHrs || 0,
-        wedHrs: e.wedHrs || 0,
-        thuHrs: e.thuHrs || 0,
-        friHrs: e.friHrs || 0,
-        satHrs: e.satHrs || 0,
-        sunHrs: e.sunHrs || 0,
-        totalHrs:
-          (e.monHrs || 0) + (e.tueHrs || 0) + (e.wedHrs || 0) +
-          (e.thuHrs || 0) + (e.friHrs || 0) + (e.satHrs || 0) + (e.sunHrs || 0),
-      })),
+  // ลบ+สร้าง entries ต้องอยู่ใน transaction เดียวกัน
+  // ไม่งั้นถ้า createMany พลาดหลัง deleteMany ข้อมูลทั้งสัปดาห์จะหายถาวร
+  try {
+    const existingId = timesheet?.id;
+    timesheet = await prisma.$transaction(async (tx) => {
+      const ts = existingId
+        ? await tx.timesheet.update({
+            where: { id: existingId },
+            data: {
+              weekStart: wsDate,
+              weekEnd:   weDate,
+              status,
+              submittedAt: action === "submit" ? new Date() : null,
+              updatedAt:   new Date(),
+            },
+          })
+        : await tx.timesheet.create({
+            data: {
+              employeeId: employeeDbId,
+              weekStart:  wsDate,
+              weekEnd:    weDate,
+              status,
+              submittedAt: action === "submit" ? new Date() : null,
+            },
+          });
+
+      if (existingId) {
+        await tx.timesheetEntry.deleteMany({ where: { timesheetId: ts.id } });
+      }
+      if (entryData.length > 0) {
+        await tx.timesheetEntry.createMany({
+          data: entryData.map((e: any) => ({ ...e, timesheetId: ts.id })),
+        });
+      }
+      return ts;
     });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: `บันทึกไม่สำเร็จ ข้อมูลเดิมยังอยู่ครบ กรุณาลองใหม่ (${e?.message || "unknown error"})` },
+      { status: 500 },
+    );
   }
 
   await prisma.auditLog.create({
