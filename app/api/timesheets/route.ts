@@ -4,6 +4,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
 import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
+import {
+  HOLIDAY_AUTOFILL_FROM, HOLIDAY_TASK_CODE,
+  weekDateStringsUTC, holidayHoursForWeek, applyHolidayHours,
+} from "@/lib/holiday-autofill";
 
 // Parse a week param that may be "yyyy-MM-dd" (new) or ISO string (legacy)
 function parseWeekStart(param: string): Date {
@@ -22,6 +26,46 @@ function weekRange(weekStart: Date) {
   };
 }
 
+
+/**
+ * Backstop ฝั่ง server: วันหยุด (จ.–ศ.) ตั้งแต่ HOLIDAY_AUTOFILL_FROM ต้องมี Holiday 8 ชม./วัน
+ * ลงใต้ Project Overhead เสมอ — เติมเฉพาะวันที่ยังว่าง จึงไม่ทับค่าที่ user แก้เอง
+ * และไม่กระทบชั่วโมงงานที่ user ลงเพิ่มในวันหยุด (คนละแถวกัน)
+ */
+async function withHolidayAutofill(weekStart: Date, entries: any[]): Promise<any[]> {
+  const weekDates = weekDateStringsUTC(weekStart);
+  if (weekDates[6] < HOLIDAY_AUTOFILL_FROM) return entries;
+
+  const holidays = await prisma.holiday.findMany({
+    where: {
+      date: {
+        gte: new Date(weekDates[0] + "T00:00:00.000Z"),
+        lte: new Date(weekDates[6] + "T00:00:00.000Z"),
+      },
+    },
+    select: { date: true },
+  });
+  const hours = holidayHoursForWeek(
+    weekDates,
+    holidays.map((h) => h.date.toISOString().slice(0, 10)),
+  );
+  if (Object.keys(hours).length === 0) return entries;
+
+  const [ohProject, holidayTask] = await Promise.all([
+    prisma.project.findFirst({
+      where: { isActive: true, OR: [{ projectType: "overhead" }, { projectType: "support" }] },
+      select: { id: true },
+    }),
+    prisma.taskCode.findFirst({ where: { code: HOLIDAY_TASK_CODE, isActive: true }, select: { id: true } }),
+  ]);
+  // ไม่มี Project Overhead หรือ Task 1001 → ข้ามไป ไม่บล็อคการบันทึกของ user
+  if (!ohProject || !holidayTask) return entries;
+
+  return applyHolidayHours(
+    entries, ohProject.id, holidayTask.id, hours,
+    (base) => ({ ...base }),
+  ).rows;
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -129,7 +173,9 @@ export async function POST(req: NextRequest) {
 
   const status = action === "submit" ? "submitted" : "draft";
 
-  const entryData = (entries || []).map((e: any) => ({
+  const finalEntries = await withHolidayAutofill(wsDate, entries || []);
+
+  const entryData = finalEntries.map((e: any) => ({
     projectId:  e.projectId,
     taskCodeId: e.taskCodeId,
     monHrs: e.monHrs || 0,

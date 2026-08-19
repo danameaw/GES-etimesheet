@@ -3,6 +3,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { format, addWeeks, subWeeks, startOfWeek } from "date-fns";
 import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
+import {
+  HOLIDAY_TASK_CODE, HOLIDAY_HRS_PER_DAY,
+  holidayHoursForWeek, applyHolidayHours,
+} from "@/lib/holiday-autofill";
 
 interface Project {
   id: string;
@@ -312,6 +316,42 @@ export default function TimesheetPage() {
   // Project Overhead / Non-Project (projectType = "overhead"/"support" หรือขึ้นต้นด้วย "GES-OH")
   const ohProject = projects.find(isOverheadProject);
 
+  // ── เติมวันหยุดให้อัตโนมัติ: Project Overhead + Task 1001 วันละ 8 ชม. ──
+  // เติมครั้งเดียวต่อสัปดาห์ที่เปิด และเติมเฉพาะช่องที่ยังว่าง
+  // → user ยังลบ/แก้ชั่วโมงได้ และเพิ่มแถวลงชั่วโมงงานในวันหยุดได้ตามปกติ
+  const autofilledWeek = useRef<string | null>(null);
+  useEffect(() => {
+    if (!loadedKey || autofilledWeek.current === loadedKey) return;
+    if (timesheetStatus === "submitted" || timesheetStatus === "approved") return;
+    if (projects.length === 0 || taskCodes.length === 0) return; // master data ยังมาไม่ครบ
+
+    const holidayProject = projects.find(isOverheadProject);
+    const holidayTask    = taskCodes.find((t) => t.code === HOLIDAY_TASK_CODE);
+    if (!holidayProject || !holidayTask) return;
+
+    const hours = holidayHoursForWeek(
+      weekDateStrings,
+      holidays.map((h) => h.date.slice(0, 10)),
+    );
+    autofilledWeek.current = loadedKey;
+    if (Object.keys(hours).length === 0) return;
+
+    // rows ถูก set มาพร้อม loadedKey ใน render เดียวกันแล้ว จึงอ่านค่าตรงๆ ได้
+    const { rows: next, changed } = applyHolidayHours(
+      rows, holidayProject.id, holidayTask.id, hours,
+      (base) => ({ ...newRow(), ...base }),
+    );
+    if (!changed) return;
+
+    setRows(next);
+    setMessage({
+      type: "warn",
+      text: `ระบบเติมวันหยุดให้อัตโนมัติแล้ว (${holidayTask.code} ${holidayTask.name} · ${HOLIDAY_HRS_PER_DAY} ชม./วัน ใต้ Project ${holidayProject.projectNumber}) — หากทำงานในวันหยุดให้เพิ่มแถวลงชั่วโมงงานได้ตามปกติ แล้วกด Save`,
+    });
+  // weekDateStrings/holidays คำนวณใหม่ทุก render — ใช้ loadedKey (คีย์สัปดาห์) เป็นตัวคุมแทน
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedKey, timesheetStatus, projects, taskCodes, holidays]);
+
   function updateRow(id: string, field: keyof TimesheetRow, value: string | number) {
     setRows((prev) =>
       prev.map((r) => {
@@ -499,6 +539,10 @@ export default function TimesheetPage() {
         <p className="text-xs font-semibold text-blue-800 mb-2">
           📋 กรณีลา / วันหยุด ให้ลง Code ต่อไปนี้ (Project:{" "}
           {ohProject ? `${ohProject.projectNumber} ${ohProject.projectName}` : "Overhead / Non-Project"})
+        </p>
+        <p className="text-xs text-blue-700 mb-2">
+          🤖 วันหยุดนักขัตฤกษ์ (จ.–ศ.) ระบบจะลง <span className="font-semibold">1001 Holidays {HOLIDAY_HRS_PER_DAY} ชม./วัน</span> ให้อัตโนมัติ
+          — หากทำงานในวันหยุด ให้เพิ่มแถวลงชั่วโมงงานในวันนั้นได้ตามปกติ
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-1">
           {[
@@ -721,11 +765,10 @@ export default function TimesheetPage() {
               {totalByDay.map((total, i) => {
                 const isHol = isHoliday(i);
                 return (
-                  <td key={i} className={`text-center font-bold text-sm ${
-                    isHol ? "bg-red-50 text-red-300" :
+                  <td key={i} className={`text-center font-bold text-sm ${isHol ? "bg-red-50 " : ""}${
                     total > 0 ? (total > 8 ? "text-red-600" : "text-blue-900") : "text-gray-400"
                   }`}>
-                    {isHol ? "–" : total > 0 ? total : "-"}
+                    {total > 0 ? total : "-"}
                   </td>
                 );
               })}
