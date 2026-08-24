@@ -204,8 +204,14 @@ function ProjectsTab() {
             <div>
               <label className="block text-xs text-gray-500 mb-1">ประเภท</label>
               <select className="ges-input" value={form.projectType} onChange={(e) => setForm({ ...form, projectType: e.target.value })}>
-                <option value="project">Project</option>
-                <option value="support">Support / Overhead</option>
+                <option value="project">Project (ไม่ระบุกลุ่ม)</option>
+                <option value="solar">☀️ Solar</option>
+                <option value="wind">💨 Wind</option>
+                <option value="gas">🔥 Gas / LNG</option>
+                <option value="datacenter">🖥️ Data Center</option>
+                <option value="procurement">📦 Procurement / Logistics</option>
+                <option value="overhead">🏢 Overhead / Non-Project</option>
+                <option value="support">Support (เดิม = Overhead)</option>
                 <option value="admin">Admin</option>
               </select>
             </div>

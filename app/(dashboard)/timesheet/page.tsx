@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { format, addWeeks, subWeeks, startOfWeek } from "date-fns";
 import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
+import { groupProjects } from "@/lib/project-groups";
 import {
   HOLIDAY_TASK_CODE, HOLIDAY_HRS_PER_DAY,
   holidayHoursForWeek, applyHolidayHours,
@@ -316,6 +317,17 @@ export default function TimesheetPage() {
   // Project Overhead / Non-Project (projectType = "overhead"/"support" หรือขึ้นต้นด้วย "GES-OH")
   const ohProject = projects.find(isOverheadProject);
 
+  // Dropdown Project — จัดกลุ่ม Solar / Wind / Gas / Procurement / Overhead / อื่นๆ
+  const projectGroups = groupProjects(projects);
+  const projectLabel = (p: Project, max: number) =>
+    `${p.projectNumber} - ${p.projectName.length > max ? p.projectName.slice(0, max - 2) + "…" : p.projectName}`;
+
+  // Task codes แยกเป็น Task ของ Project และ Task OH (คนละชุด ไม่ปนกัน)
+  const projectTaskCodes  = taskCodes.filter((t) => !OH_CATEGORIES.has(t.category));
+  const ohTaskCodes       = taskCodes.filter((t) =>  OH_CATEGORIES.has(t.category));
+  const projectCategories = Array.from(new Set(projectTaskCodes.map((t) => t.category))).sort();
+  const ohCategories      = Array.from(new Set(ohTaskCodes.map((t) => t.category))).sort();
+
   // ── เติมวันหยุดให้อัตโนมัติ: Project Overhead + Task 1001 วันละ 8 ชม. ──
   // เติมครั้งเดียวต่อสัปดาห์ที่เปิด และเติมเฉพาะช่องที่ยังว่าง
   // → user ยังลบ/แก้ชั่วโมงได้ และเพิ่มแถวลงชั่วโมงงานในวันหยุดได้ตามปกติ
@@ -364,11 +376,11 @@ export default function TimesheetPage() {
             updated.projectId = ohProject.id;
           }
         }
-        // ถ้าเปลี่ยนไป Project ที่ไม่ใช่ OH แต่ task เดิมเป็น OH → ล้าง task ทิ้ง (กันข้อมูลเก่า/ค้าง)
+        // เปลี่ยน Project แล้ว task เดิมไม่ตรงกลุ่ม (OH ↔ Project) → ล้าง task ทิ้ง
         if (field === "projectId") {
           const task = taskCodes.find((t) => t.id === updated.taskCodeId);
-          const newProject = projects.find((p) => p.id === value);
-          if (task && OH_CATEGORIES.has(task.category) && !isOverheadProject(newProject)) {
+          const newProjectIsOH = isOverheadProject(projects.find((p) => p.id === value));
+          if (task && OH_CATEGORIES.has(task.category) !== newProjectIsOH) {
             updated.taskCodeId = "";
           }
         }
@@ -653,15 +665,11 @@ export default function TimesheetPage() {
               const rowTotal = DAYS.reduce((sum, d) => sum + (Number(row[d.key]) || 0), 0);
               const selectedTask = taskCodes.find((t) => t.id === row.taskCodeId);
               const rowIsOH = selectedTask ? OH_CATEGORIES.has(selectedTask.category) : false;
-              // OH task codes จะโชว์เฉพาะเมื่อเลือก Project เป็น Overhead (GES-OH) เท่านั้น
-              // (rowIsOH ไว้กันกรณีข้อมูลเก่าที่ task OH ผูกกับ project อื่น — จะได้ไม่หายไปจาก dropdown)
-              const rowProjectIsOH = !!ohProject && row.projectId === ohProject.id;
-              const showOHTasks    = rowProjectIsOH || rowIsOH;
-              // Task codes split into project vs OH groups
-              const projectTaskCodes = taskCodes.filter((t) => !OH_CATEGORIES.has(t.category));
-              const ohTaskCodes      = taskCodes.filter((t) =>  OH_CATEGORIES.has(t.category));
-              const projectCategories = Array.from(new Set(projectTaskCodes.map((t) => t.category))).sort();
-              const ohCategories      = Array.from(new Set(ohTaskCodes.map((t) => t.category))).sort();
+              // เลือก Project Overhead → เห็นแต่ Task OH / เลือก Project อื่น → เห็นแต่ Task ของ Project
+              // (rowIsOH / !rowIsOH ไว้กันข้อมูลเก่าที่จับคู่ไม่ตรงกลุ่ม — Task ที่เลือกไว้แล้วจะไม่หายจาก dropdown)
+              const rowProjectIsOH   = !!ohProject && row.projectId === ohProject.id;
+              const showOHTasks      = rowProjectIsOH || rowIsOH;
+              const showProjectTasks = !rowProjectIsOH || (!!selectedTask && !rowIsOH);
               return (
                 <tr key={row.id}>
                   {/* Project selector — lock to GES-OH if OH task */}
@@ -673,10 +681,12 @@ export default function TimesheetPage() {
                       className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${rowIsOH ? "border-orange-200 text-orange-700" : "border-gray-200"}`}
                     >
                       <option value="">-- Select Project --</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.projectNumber} - {p.projectName.length > 30 ? p.projectName.slice(0, 28) + "…" : p.projectName}
-                        </option>
+                      {projectGroups.map((g) => (
+                        <optgroup key={g.key} label={`${g.icon} ${g.label}`}>
+                          {g.projects.map((p) => (
+                            <option key={p.id} value={p.id}>{projectLabel(p, 30)}</option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                     {rowIsOH && (rowProjectIsOH
@@ -696,7 +706,7 @@ export default function TimesheetPage() {
                       className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50"
                     >
                       <option value="">-- Task --</option>
-                      {projectCategories.length > 0 && (
+                      {showProjectTasks && (
                         projectCategories.map((cat) => (
                           <optgroup key={cat} label={`📋 ${cat}`}>
                             {projectTaskCodes.filter((t) => t.category === cat).map((t) => (
@@ -705,7 +715,7 @@ export default function TimesheetPage() {
                           </optgroup>
                         ))
                       )}
-                      {showOHTasks && ohCategories.length > 0 && (
+                      {showOHTasks && (
                         ohCategories.map((cat) => (
                           <optgroup key={cat} label={`🏢 ${cat}`}>
                             {ohTaskCodes.filter((t) => t.category === cat).map((t) => (
@@ -715,7 +725,9 @@ export default function TimesheetPage() {
                         ))
                       )}
                     </select>
-                    {!showOHTasks && ohProject && (
+                    {rowProjectIsOH ? (
+                      <p className="text-xs text-orange-500 mt-0.5">แสดงเฉพาะ Task OH</p>
+                    ) : ohProject && (
                       <p className="text-xs text-gray-400 mt-0.5">
                         OH Task: เลือก Project {ohProject.projectNumber} ก่อน
                       </p>
@@ -874,18 +886,20 @@ export default function TimesheetPage() {
             onChange={(e) => {
               const pid = e.target.value;
               setFavAddProjectId(pid);
-              // ถ้าเปลี่ยนไป Project ที่ไม่ใช่ OH แต่ task ที่เลือกไว้เป็น OH → ล้าง task
+              // Task ที่เลือกไว้ไม่ตรงกลุ่มของ Project ใหม่ (OH ↔ Project) → ล้าง task
               const task = taskCodes.find((t) => t.id === favAddTaskId);
               const isOHProject = !!ohProject && pid === ohProject.id;
-              if (task && OH_CATEGORIES.has(task.category) && !isOHProject) setFavAddTaskId("");
+              if (task && OH_CATEGORIES.has(task.category) !== isOHProject) setFavAddTaskId("");
             }}
             className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white flex-1 min-w-[180px]"
           >
             <option value="">-- เลือก Project --</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.projectNumber} - {p.projectName.length > 35 ? p.projectName.slice(0, 33) + "…" : p.projectName}
-              </option>
+            {projectGroups.map((g) => (
+              <optgroup key={g.key} label={`${g.icon} ${g.label}`}>
+                {g.projects.map((p) => (
+                  <option key={p.id} value={p.id}>{projectLabel(p, 35)}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <select
@@ -895,11 +909,9 @@ export default function TimesheetPage() {
           >
             <option value="">-- เลือก Task --</option>
             {(() => {
-              // OH task codes โชว์เฉพาะเมื่อเลือก Project เป็น Overhead (GES-OH)
+              // Project Overhead → เห็นแต่ Task OH / Project อื่น → เห็นแต่ Task ของ Project
               const favProjectIsOH = !!ohProject && favAddProjectId === ohProject.id;
-              const selectable = favProjectIsOH
-                ? taskCodes
-                : taskCodes.filter((t) => !OH_CATEGORIES.has(t.category));
+              const selectable = favProjectIsOH ? ohTaskCodes : projectTaskCodes;
               return Array.from(new Set(selectable.map((t) => t.category))).sort().map((cat) => (
                 <optgroup key={cat} label={cat}>
                   {selectable.filter((t) => t.category === cat).map((t) => (

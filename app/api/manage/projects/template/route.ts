@@ -66,7 +66,8 @@ export async function GET() {
     [""],
     ["1. กรอกข้อมูลในชีต \"Projects\" หนึ่งโครงการต่อหนึ่งแถว"],
     ["2. Project Number และ Project Name จำเป็นต้องกรอก"],
-    ["3. Type เลือกได้: project / support / admin (ค่าว่าง = project)"],
+    [`3. Type เลือกได้: ${PROJECT_TYPES.join(" / ")} (ค่าว่าง = project)`],
+    ["   — solar / wind / gas / datacenter / procurement / overhead ใช้จัดกลุ่ม dropdown Project ในหน้า Timesheet"],
     ["4. PD/PM ให้ใส่รหัสพนักงาน (Employee ID) จากรายการด้านล่าง (เว้นว่างได้)"],
     ["5. วันที่ใช้รูปแบบ YYYY-MM-DD (เว้นว่างได้)"],
     ["6. Active: Yes = ใช้งาน, No = ปิดใช้งาน (ค่าว่าง = Yes)"],
@@ -79,8 +80,12 @@ export async function GET() {
   const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
   wsGuide["!cols"] = [{ wch: 16 }, { wch: 35 }, { wch: 24 }, { wch: 12 }];
   if (wsGuide["A1"]) wsGuide["A1"].s = { font: { bold: true, sz: 14 } };
-  if (wsGuide["A11"]) wsGuide["A11"].s = { font: { bold: true } };
-  ["A12", "B12", "C12", "D12"].forEach((cell) => {
+  // แถวหัวข้อ/หัวตารางรายชื่อ PD-PM — หาตำแหน่งจริง กันเลื่อนเมื่อเพิ่ม/ลดบรรทัดคู่มือ
+  const refTitleRow  = guideRows.findIndex((r) => r[0] === "รายชื่อพนักงานที่ใช้เป็น PD/PM ได้") + 1;
+  const refHeaderRow = refTitleRow + 1;
+  if (wsGuide[`A${refTitleRow}`]) wsGuide[`A${refTitleRow}`].s = { font: { bold: true } };
+  ["A", "B", "C", "D"].forEach((col) => {
+    const cell = `${col}${refHeaderRow}`;
     if (wsGuide[cell]) wsGuide[cell].s = HEADER_STYLE;
   });
   XLSX.utils.book_append_sheet(wb, wsGuide, "Guide");

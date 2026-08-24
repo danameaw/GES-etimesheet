@@ -11,4 +11,8 @@ export const PROJECT_HEADERS = [
 ];
 
 // ชนิดโครงการที่รองรับ (ต้องตรงกับ dropdown ในหน้า Manage)
-export const PROJECT_TYPES = ["project", "support", "admin"];
+// solar/wind/gas/datacenter/procurement/overhead = กลุ่มที่ใช้จัด dropdown Project ในหน้า Timesheet
+// (ดู lib/project-groups.ts) — "project" = ยังไม่ระบุกลุ่ม ระบบจะเดากลุ่มจากชื่อโครงการให้
+export const PROJECT_TYPES = [
+  "project", "solar", "wind", "gas", "datacenter", "procurement", "overhead", "support", "admin",
+];

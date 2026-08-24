@@ -308,23 +308,31 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Progress bar */}
-      {summary && summary.total > 0 && (
-        <div className="ges-card p-4 mb-6">
-          <div className="flex justify-between text-sm mb-2">
-            <span className="font-medium text-gray-700">{isPD ? "อนุมัติแล้ว" : "Submission Progress"}</span>
-            <span className="text-gray-500">
-              {isPD
-                ? `อนุมัติ ${approvedCount}/${summary.total} (${Math.round((approvedCount / summary.total) * 100)}%)`
-                : `${summary.submitted}/${summary.total} (${Math.round((summary.submitted / summary.total) * 100)}%)`}
-            </span>
+      {/* Progress bar — "ส่งแล้ว" = รออนุมัติ + อนุมัติแล้ว (เดิมนับแค่รออนุมัติ ทำให้ % ลดลงเมื่อ approve) */}
+      {summary && summary.total > 0 && (() => {
+        const pct       = (n: number) => (n / summary.total) * 100;
+        const submitted = summary.submitted + approvedCount;
+        const done      = isPD ? approvedCount : submitted;
+        return (
+          <div className="ges-card p-4 mb-6">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="font-medium text-gray-700">{isPD ? "อนุมัติแล้ว" : "Submission Progress"}</span>
+              <span className="text-gray-500">
+                {isPD && "อนุมัติ "}{done}/{summary.total} ({Math.round(pct(done))}%)
+                {!isPD && summary.submitted > 0 && (
+                  <span className="text-gray-400"> · อนุมัติแล้ว {approvedCount} · รออนุมัติ {summary.submitted}</span>
+                )}
+              </span>
+            </div>
+            <div className="flex h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-green-500 transition-all duration-500" style={{ width: `${pct(approvedCount)}%` }} />
+              {!isPD && (
+                <div className="h-full bg-amber-400 transition-all duration-500" style={{ width: `${pct(summary.submitted)}%` }} />
+              )}
+            </div>
           </div>
-          <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-green-500 rounded-full transition-all duration-500"
-              style={{ width: `${isPD ? (approvedCount / summary.total) * 100 : (summary.submitted / summary.total) * 100}%` }} />
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Export section: Executive Report headlines, individual reports below ── */}
       {(() => {
