@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 interface Rate {
   id: string;
   order: number;
-  level: string;
+  level: string;      // สายบริหาร — EVP / SVP / VP / AVP / Manager …
+  engLevel: string;   // สายวิศวกร — Principle Engineer / Senior Engineer II …
   rate: number;
   isActive: boolean;
 }
@@ -20,7 +21,10 @@ interface Employee {
   level: string;
 }
 
-const emptyForm = { level: "", rate: "" };
+const emptyForm = { level: "", engLevel: "", rate: "" };
+
+// ตัวหารชั่วโมงทำงานต่อเดือน — ใช้แปลง Charge Rate (บาท/เดือน) เป็น บาท/ชม. (ยังไม่สรุปตัวเลข)
+const DEFAULT_HOURS_PER_MONTH = 176; // 8 ชม. × 22 วัน
 
 export default function StandardRatePage() {
   const { data: session } = useSession();
@@ -44,6 +48,20 @@ export default function StandardRatePage() {
   const [levelSaving, setLevelSaving] = useState<string | null>(null); // empId being saved
   const [empSearch, setEmpSearch]     = useState("");
   const [levelFilter, setLevelFilter] = useState("all");
+
+  // ── ตัวหารชั่วโมง/เดือน (เก็บในเครื่อง ยังไม่ผูกกับฐานข้อมูล) ────
+  const [hoursPerMonth, setHoursPerMonth] = useState<string>(String(DEFAULT_HOURS_PER_MONTH));
+  useEffect(() => {
+    const saved = localStorage.getItem("ges.hoursPerMonth");
+    if (saved) setHoursPerMonth(saved);
+  }, []);
+  function changeHours(v: string) {
+    setHoursPerMonth(v);
+    localStorage.setItem("ges.hoursPerMonth", v);
+  }
+  const divisor = Number(hoursPerMonth) > 0 ? Number(hoursPerMonth) : 0;
+  const perHour = (rate: number) =>
+    divisor ? (rate / divisor).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,7 +87,7 @@ export default function StandardRatePage() {
   }
 
   function openEdit(r: Rate) {
-    setForm({ level: r.level, rate: String(r.rate) });
+    setForm({ level: r.level, engLevel: r.engLevel || "", rate: String(r.rate) });
     setEditingId(r.id);
     setFormError("");
     setShowForm(true);
@@ -80,7 +98,7 @@ export default function StandardRatePage() {
     if (!form.rate || isNaN(Number(form.rate))) { setFormError("กรุณากรอก Standard Rate (ตัวเลข)"); return; }
     setSaving(true); setFormError("");
 
-    const body = { level: form.level.trim(), rate: Number(form.rate) };
+    const body = { level: form.level.trim(), engLevel: form.engLevel.trim(), rate: Number(form.rate) };
     const res = editingId
       ? await fetch("/api/standard-rate", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: editingId, ...body }) })
       : await fetch("/api/standard-rate", { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -123,7 +141,7 @@ export default function StandardRatePage() {
     setEmployees((prev) => prev.map((e) => e.id === empId ? { ...e, level } : e));
   }
 
-  const levelOptions = ["", ...rates.map((r) => r.level)];
+  const levelLabel = (r: Rate) => (r.engLevel ? `${r.level} — ${r.engLevel}` : r.level);
 
   const filteredEmps = employees.filter((e) => {
     const matchSearch = !empSearch || e.name.toLowerCase().includes(empSearch.toLowerCase()) ||
@@ -141,7 +159,7 @@ export default function StandardRatePage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Standard Rate</h1>
-        <p className="text-gray-500 text-sm mt-0.5">กำหนด Level และ Standard Rate — ใช้อ้างอิงในการคิดต้นทุนโครงการ</p>
+        <p className="text-gray-500 text-sm mt-0.5">กำหนด Level (สายบริหาร / สายวิศวกร) และ Standard Rate — ใช้อ้างอิงในการคิดต้นทุนและค่า Fee ของโครงการ</p>
       </div>
 
       {/* ── Section 1: Rate Table ─────────────────────────────────── */}
@@ -149,11 +167,24 @@ export default function StandardRatePage() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div>
             <h2 className="font-semibold text-gray-800">💰 Standard Rate ตาม Level</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{rates.length} Level</p>
+            <p className="text-xs text-gray-400 mt-0.5">{rates.length} Level · ระบุได้ทั้งสายบริหาร และสายวิศวกร</p>
           </div>
-          <button onClick={openAdd} className="ges-btn-primary flex items-center gap-2 text-sm">
-            <span className="text-base leading-none">+</span> เพิ่ม Level
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 whitespace-nowrap">ตัวหาร (ชม./เดือน)</label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={hoursPerMonth}
+                onChange={(e) => changeHours(e.target.value)}
+                className="ges-input w-24 text-sm"
+              />
+            </div>
+            <button onClick={openAdd} className="ges-btn-primary flex items-center gap-2 text-sm">
+              <span className="text-base leading-none">+</span> เพิ่ม Level
+            </button>
+          </div>
         </div>
 
         {/* Add / Edit form */}
@@ -164,24 +195,34 @@ export default function StandardRatePage() {
             </p>
             <div className="flex flex-wrap gap-3 items-end">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Level *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Level — สายบริหาร *</label>
                 <input
                   type="text"
                   value={form.level}
                   onChange={(e) => setForm({ ...form, level: e.target.value })}
-                  placeholder="เช่น Engineer I, Senior Engineer II"
+                  placeholder="เช่น VP, AVP, Manager"
+                  className="ges-input w-56"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Level — สายวิศวกร</label>
+                <input
+                  type="text"
+                  value={form.engLevel}
+                  onChange={(e) => setForm({ ...form, engLevel: e.target.value })}
+                  placeholder="เช่น Principle Engineer, Senior Engineer II"
                   className="ges-input w-64"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Standard Rate (บาท/ชั่วโมง) *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Standard Rate (บาท/เดือน) *</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   value={form.rate}
                   onChange={(e) => setForm({ ...form, rate: e.target.value })}
-                  placeholder="เช่น 500"
+                  placeholder="เช่น 590000 (ต่อเดือน)"
                   className="ges-input w-40"
                 />
               </div>
@@ -209,8 +250,10 @@ export default function StandardRatePage() {
             <thead>
               <tr>
                 <th className="text-center w-20">ลำดับที่</th>
-                <th className="text-left">Level</th>
-                <th className="text-right">Standard Rate (บาท/ชั่วโมง)</th>
+                <th className="text-left">Level (สายบริหาร)</th>
+                <th className="text-left">Level (สายวิศวกร)</th>
+                <th className="text-right">Standard Rate (บาท/เดือน)</th>
+                <th className="text-right w-36">≈ บาท/ชม.</th>
                 <th className="text-center w-16">จัดเรียง</th>
                 <th className="text-center w-24">จัดการ</th>
               </tr>
@@ -224,8 +267,21 @@ export default function StandardRatePage() {
                       {r.level}
                     </span>
                   </td>
+                  <td>
+                    {r.engLevel ? (
+                      <span className="inline-block bg-green-100 text-green-800 text-sm font-semibold px-3 py-0.5 rounded-full">
+                        {r.engLevel}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </td>
                   <td className="text-right font-semibold text-gray-800">
                     <span className="text-lg">{r.rate.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="text-xs text-gray-400 ml-1">บาท/เดือน</span>
+                  </td>
+                  <td className="text-right text-sm text-gray-500">
+                    {perHour(r.rate)}
                     <span className="text-xs text-gray-400 ml-1">บาท/ชม.</span>
                   </td>
                   <td className="text-center">
@@ -247,6 +303,13 @@ export default function StandardRatePage() {
             </tbody>
           </table>
         )}
+
+        {!loading && rates.length > 0 && (
+          <p className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
+            * คอลัมน์ ≈ บาท/ชม. คำนวณจาก Standard Rate ÷ {divisor ? divisor.toLocaleString("th-TH") : "—"} ชม./เดือน
+            — ตัวหารยังไม่สรุป ปรับได้ที่ช่อง “ตัวหาร (ชม./เดือน)” ด้านบน (เก็บเฉพาะในเครื่องนี้ ยังไม่บันทึกลงระบบ)
+          </p>
+        )}
       </div>
 
       {/* ── Section 2: Employee Level Assignment ─────────────────── */}
@@ -263,7 +326,7 @@ export default function StandardRatePage() {
           <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} className="ges-input w-auto">
             <option value="all">ทุก Level</option>
             <option value="none">ยังไม่กำหนด</option>
-            {rates.map((r) => <option key={r.id} value={r.level}>{r.level}</option>)}
+            {rates.map((r) => <option key={r.id} value={r.level}>{levelLabel(r)}</option>)}
           </select>
           <span className="self-center text-sm text-gray-400">{filteredEmps.length} คน</span>
         </div>
@@ -302,9 +365,13 @@ export default function StandardRatePage() {
                           disabled={levelSaving === emp.id}
                           className="ges-input w-full text-sm disabled:opacity-50"
                         >
-                          {levelOptions.map((l) => (
-                            <option key={l} value={l}>{l || "— ยังไม่กำหนด —"}</option>
+                          <option value="">— ยังไม่กำหนด —</option>
+                          {rates.map((r) => (
+                            <option key={r.id} value={r.level}>{levelLabel(r)}</option>
                           ))}
+                          {emp.level && !rates.some((r) => r.level === emp.level) && (
+                            <option value={emp.level}>{emp.level}</option>
+                          )}
                         </select>
                         {levelSaving === emp.id && (
                           <span className="text-xs text-gray-400 whitespace-nowrap">บันทึก…</span>
@@ -313,10 +380,15 @@ export default function StandardRatePage() {
                     </td>
                     <td className="text-right text-sm">
                       {matchedRate ? (
-                        <span className="font-semibold text-green-700">
-                          {matchedRate.rate.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
-                          <span className="text-xs text-gray-400 ml-1">บาท/ชม.</span>
-                        </span>
+                        <div>
+                          <div className="font-semibold text-green-700">
+                            {matchedRate.rate.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                            <span className="text-xs text-gray-400 ml-1">บาท/เดือน</span>
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            ≈ {perHour(matchedRate.rate)} บาท/ชม.
+                          </div>
+                        </div>
                       ) : (
                         <span className="text-gray-300 text-xs">—</span>
                       )}

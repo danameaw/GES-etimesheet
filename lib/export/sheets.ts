@@ -200,6 +200,7 @@ export function writeProjectTaskSheet(
 export type UtilizationRow = {
   employeeId: string; name: string; department: string; position: string;
   hours: number; utilization: number; status: string;
+  weeksLogged: number; weeksSubmitted: number;
 };
 
 export function writeUtilizationSheet(
@@ -214,6 +215,8 @@ export function writeUtilizationSheet(
     { header: "Total Hours", width: 12 },
     { header: "Utilization %", width: 14 },
     { header: "Status", width: 14 },
+    { header: "Weeks Logged", width: 14 },
+    { header: "Weeks Submitted", width: 16 },
   ];
   ws.columns = cols.map((c) => ({ width: c.width }));
   addTitleBand(ws, title, subtitle, cols.length);
@@ -222,19 +225,39 @@ export function writeUtilizationSheet(
   ws.getRow(headerRowNum).values = cols.map((c) => c.header);
   styleHeaderRow(ws, headerRowNum, cols.length);
   ws.views = [{ state: "frozen", ySplit: headerRowNum }];
-  ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: cols.length } };
 
-  let r = headerRowNum + 1;
-  let alt = false;
-  for (const row of rows) {
-    ws.getRow(r).values = [row.employeeId, row.name, row.department, row.position, row.hours, row.utilization / 100, row.status];
+  const writeDataRow = (r: number, row: UtilizationRow, alt: boolean) => {
+    ws.getRow(r).values = [
+      row.employeeId, row.name, row.department, row.position,
+      row.hours, row.utilization / 100, row.status, row.weeksLogged, row.weeksSubmitted,
+    ];
     ws.getRow(r).getCell(5).numFmt = HRS_FMT;
     ws.getRow(r).getCell(6).numFmt = "0%";
     styleDataRow(ws, r, cols.length, alt);
     styleStatusCell(ws.getRow(r).getCell(7), row.status);
-    alt = !alt;
-    r++;
-  }
+  };
+
+  // Grouped into >=90% / <90% blocks per the utilization threshold, each with its own labeled band.
+  const meetsTarget = rows.filter((row) => row.utilization >= 90);
+  const belowTarget = rows.filter((row) => row.utilization < 90);
+
+  let r = headerRowNum + 1;
+
+  ws.getRow(r).values = [`>= 90% Utilization  (${meetsTarget.length} employees)`];
+  styleGroupRow(ws, r, cols.length);
+  ws.mergeCells(r, 1, r, cols.length);
+  r++;
+  let alt = false;
+  for (const row of meetsTarget) { writeDataRow(r, row, alt); alt = !alt; r++; }
+
+  ws.getRow(r).values = [`< 90% Utilization  (${belowTarget.length} employees)`];
+  styleGroupRow(ws, r, cols.length);
+  ws.mergeCells(r, 1, r, cols.length);
+  r++;
+  alt = false;
+  for (const row of belowTarget) { writeDataRow(r, row, alt); alt = !alt; r++; }
+
+  ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: r - 1, column: cols.length } };
   if (rows.length > 0) addColorScale(ws, `F${headerRowNum + 1}:F${r - 1}`);
   return ws;
 }

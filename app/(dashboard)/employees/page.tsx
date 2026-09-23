@@ -213,6 +213,26 @@ export default function EmployeesPage() {
     reader.readAsArrayBuffer(file);
   }
 
+  // ─── Excel Export ─────────────────────────────────────────────────────────
+
+  function exportEmployees() {
+    const rows = filtered.map((emp) => ({
+      "Employee ID": emp.employeeId,
+      "Name": emp.name,
+      "Department": emp.department,
+      "Position": emp.position,
+      "Level": emp.level || "",
+      "Role": ROLES.find((r) => r.value === emp.role)?.label ?? emp.role,
+      "Status": emp.isActive ? "Active" : "Inactive",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 20 }, { wch: 26 }, { wch: 20 }, { wch: 16 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Employees");
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `employees_${dateStr}.xlsx`);
+  }
+
   function handleFileDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
@@ -280,6 +300,9 @@ export default function EmployeesPage() {
           <p className="text-gray-500 text-sm">เพิ่ม / แก้ไข / ปิดใช้งานบัญชีพนักงาน</p>
         </div>
         <div className="flex gap-2">
+          <button onClick={exportEmployees} className="ges-btn-secondary flex items-center gap-2">
+            <span>📤</span> Export
+          </button>
           <button
             onClick={() => { setImportModal(true); setImportRows([]); setImportResult(null); }}
             className="ges-btn-secondary flex items-center gap-2"

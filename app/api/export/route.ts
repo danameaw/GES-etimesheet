@@ -58,10 +58,12 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     }),
   ]);
 
-  const aggMap = new Map<string, { hrs: number; done: number; lastStatus: string }>();
+  const aggMap = new Map<string, { hrs: number; done: number; logged: number; lastStatus: string }>();
   for (const t of timesheets) {
-    const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, lastStatus: t.status };
-    a.hrs += t.entries.reduce((s, e) => s + e.totalHrs, 0);
+    const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, logged: 0, lastStatus: t.status };
+    const weekHrs = t.entries.reduce((s, e) => s + e.totalHrs, 0);
+    a.hrs += weekHrs;
+    if (weekHrs > 0) a.logged += 1; // any hours entered that week, regardless of status (draft counts)
     if (DONE_STATUSES.includes(t.status)) a.done += 1;
     a.lastStatus = t.status;
     aggMap.set(t.employeeId, a);
@@ -78,7 +80,11 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     const totalHrs = a?.hrs || 0;
     const utilization = Math.round((totalHrs / capacity) * 100);
     const status = !a ? "missing" : isMonth ? `${a.done}/${weeksCount} weeks` : a.lastStatus;
-    rows.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position, hours: totalHrs, utilization, status });
+    rows.push({
+      employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position,
+      hours: totalHrs, utilization, status,
+      weeksLogged: a?.logged || 0, weeksSubmitted: a?.done || 0,
+    });
     if (!submittedIds.has(emp.id)) {
       const ts = timesheets.find((t) => t.employeeId === emp.id);
       missing.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position, status: ts?.status || "missing" });

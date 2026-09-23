@@ -159,8 +159,9 @@ model ResourcePlanEmployeeMonthly {
 model StandardRate {
   id        String   @id @default(cuid())
   order     Int      @default(0)   // ลำดับที่
-  level     String   @unique       // e.g. "Engineer I", "Senior Engineer II"
-  rate      Float    @default(0)   // THB/hour
+  level     String   @unique       // สายบริหาร e.g. "VP", "AVP", "Manager"
+  engLevel  String   @default("")  // สายวิศวกร e.g. "Principle Engineer", "Senior Engineer II"
+  rate      Float    @default(0)   // THB per month (charge rate)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
