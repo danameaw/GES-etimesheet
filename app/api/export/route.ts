@@ -43,6 +43,15 @@ const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const DONE_STATUSES = ["submitted", "approved"];
 
+// Senior staff who are not required to log timesheets - excluded from all
+// utilization/compliance counting (Utilization, Missing, and Executive
+// reports: totals, avg utilization, submission compliance %). They still
+// appear normally on the Employees admin page; this only affects reporting.
+const TIMESHEET_EXEMPT_IDS = new Set([
+  "2962", "1215", "0584", "2623", "3486", "0260",
+  "3033", "0248", "GES001", "0327", "GES003", "0353",
+]);
+
 // ±13h tolerance window for backward-compat with Thailand UTC+7 stored dates
 function weekRange(weekStart: Date) {
   return { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) };
@@ -50,13 +59,14 @@ function weekRange(weekStart: Date) {
 
 // Per-employee utilization for the period, plus the aggregate stats the Dashboard needs.
 async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeksCount: number, isMonth: boolean) {
-  const [allEmployees, timesheets] = await Promise.all([
+  const [allEmployeesRaw, timesheets] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
       where: { weekStart: tsWeekFilter },
       include: { employee: true, entries: { where: projEntryFilter } },
     }),
   ]);
+  const allEmployees = allEmployeesRaw.filter((e) => !TIMESHEET_EXEMPT_IDS.has(e.employeeId));
 
   const aggMap = new Map<string, { hrs: number; done: number; logged: number; lastStatus: string }>();
   for (const t of timesheets) {
