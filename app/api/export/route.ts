@@ -482,89 +482,110 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Builds a "label + 12 × (Plan, Actual) + totals + variance" sheet; returns row writers bound to it
     const dsColCount = 1 + months.length * 2 + 3;
-    const ds = wb.addWorksheet(`Summary by Dept ${year}`);
-    ds.columns = [{ width: 40 }, ...Array(months.length * 2).fill({ width: 10 }), { width: 14 }, { width: 14 }, { width: 10 }];
-    addTitleBand(ds, `GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก ${year}`, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   Generated: ${generatedAt}`, dsColCount);
-
-    const dsHead1: string[] = ["โครงการ / แผนก"];
-    const dsHead2: string[] = [""];
-    for (const m of months) {
-      dsHead1.push(`${MONTH_NAMES[m-1]} ${year}`, "");
-      dsHead2.push("Plan (MM)", "Actual (MM)");
-    }
-    dsHead1.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
-    dsHead2.push("", "", "");
-    ds.getRow(headerRow1).values = dsHead1;
-    ds.getRow(headerRow2).values = dsHead2;
-    for (const m of months) ds.mergeCells(headerRow1, 2 + (m - 1) * 2, headerRow1, 3 + (m - 1) * 2);
-    ds.mergeCells(headerRow1, 1, headerRow2, 1);
-    const dsSumStart = 2 + months.length * 2;
-    for (let c = dsSumStart; c < dsSumStart + 3; c++) ds.mergeCells(headerRow1, c, headerRow2, c);
-    styleHeaderRow(ds, headerRow1, dsColCount);
-    styleHeaderRow(ds, headerRow2, dsColCount);
-    ds.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow2 }];
-
-    // Writes one label + 12×(plan, actual) + totals + variance row; adds into `acc` when given
-    const writeMMRow = (rowNo: number, label: string, data: MonthPair, acc?: MonthPair) => {
-      const row: (string | number)[] = [label];
-      let tPlan = 0, tActual = 0;
-      data.forEach(({ plan, actual }, mi) => {
-        row.push(fmtMM(plan), fmtMM(actual));
-        tPlan += plan; tActual += actual;
-        if (acc) { acc[mi].plan += plan; acc[mi].actual += actual; }
-      });
-      const variance = tPlan > 0 ? Math.round(((tActual - tPlan) / tPlan) * 100) : null;
-      row.push(fmtMM(tPlan), fmtMM(tActual), variance !== null ? `${variance}%` : "–");
-      ds.getRow(rowNo).values = row;
-      return variance;
-    };
-    const styleDetailRow = (rowNo: number, variance: number | null) => {
-      for (let c = 1; c <= dsColCount; c++) {
-        const cell = ds.getRow(rowNo).getCell(c);
-        cell.border = { top: { style: "hair", color: { argb: COLORS.border } }, bottom: { style: "hair", color: { argb: COLORS.border } } };
-        cell.font = { size: 9.5, color: { argb: COLORS.textDark } };
+    const addMMSheet = (sheetName: string, title: string, firstHeader: string) => {
+      const ws = wb.addWorksheet(sheetName);
+      ws.columns = [{ width: 40 }, ...Array(months.length * 2).fill({ width: 10 }), { width: 14 }, { width: 14 }, { width: 10 }];
+      addTitleBand(ws, title, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, dsColCount);
+      const head1: string[] = [firstHeader];
+      const head2: string[] = [""];
+      for (const m of months) {
+        head1.push(`${MONTH_NAMES[m-1]} ${year}`, "");
+        head2.push("Plan (MM)", "Actual (MM)");
       }
-      if (variance !== null) {
-        ds.getRow(rowNo).getCell(dsColCount).font = { size: 9.5, bold: true, color: { argb: variance < 0 ? COLORS.danger : COLORS.success } };
-      }
-    };
+      head1.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
+      head2.push("", "", "");
+      ws.getRow(headerRow1).values = head1;
+      ws.getRow(headerRow2).values = head2;
+      for (const m of months) ws.mergeCells(headerRow1, 2 + (m - 1) * 2, headerRow1, 3 + (m - 1) * 2);
+      ws.mergeCells(headerRow1, 1, headerRow2, 1);
+      const sumStart = 2 + months.length * 2;
+      for (let c = sumStart; c < sumStart + 3; c++) ws.mergeCells(headerRow1, c, headerRow2, c);
+      styleHeaderRow(ws, headerRow1, dsColCount);
+      styleHeaderRow(ws, headerRow2, dsColCount);
+      ws.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow2 }];
 
-    let dr = headerRow2 + 1;
-    const allDeptTotals = new Map<string, MonthPair>();
+      // label + months + totals + variance; adds into `acc` when given; detail rows get hairline styling
+      const writeRow = (rowNo: number, label: string, data: MonthPair, opts: { acc?: MonthPair; detail?: boolean } = {}) => {
+        const row: (string | number)[] = [label];
+        let tPlan = 0, tActual = 0;
+        data.forEach(({ plan, actual }, mi) => {
+          row.push(fmtMM(plan), fmtMM(actual));
+          tPlan += plan; tActual += actual;
+          if (opts.acc) { opts.acc[mi].plan += plan; opts.acc[mi].actual += actual; }
+        });
+        const variance = tPlan > 0 ? Math.round(((tActual - tPlan) / tPlan) * 100) : null;
+        row.push(fmtMM(tPlan), fmtMM(tActual), variance !== null ? `${variance}%` : "–");
+        ws.getRow(rowNo).values = row;
+        if (!opts.detail) { styleSubtotalRow(ws, rowNo, dsColCount); return; }
+        for (let c = 1; c <= dsColCount; c++) {
+          const cell = ws.getRow(rowNo).getCell(c);
+          cell.border = { top: { style: "hair", color: { argb: COLORS.border } }, bottom: { style: "hair", color: { argb: COLORS.border } } };
+          cell.font = { size: 9.5, color: { argb: COLORS.textDark } };
+        }
+        if (variance !== null) {
+          ws.getRow(rowNo).getCell(dsColCount).font = { size: 9.5, bold: true, color: { argb: variance < 0 ? COLORS.danger : COLORS.success } };
+        }
+      };
+      const writeGroup = (rowNo: number, label: string) => {
+        ws.getRow(rowNo).values = [label];
+        styleGroupRow(ws, rowNo, dsColCount);
+        ws.mergeCells(rowNo, 1, rowNo, dsColCount);
+      };
+      return { writeRow, writeGroup };
+    };
+    const byName = <T,>(a: [string, T], b: [string, T]) => a[0].localeCompare(b[0]);
     const sortedDeptProjs = Array.from(deptProjMap.values()).sort((a, b) => a.num.localeCompare(b.num));
-    for (const proj of sortedDeptProjs) {
-      ds.getRow(dr).values = [`${proj.num} — ${proj.name}`];
-      styleGroupRow(ds, dr, dsColCount);
-      ds.mergeCells(dr, 1, dr, dsColCount);
-      dr++;
 
-      const projTotals = newMonths();
-      for (const [dept, data] of Array.from(proj.depts.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        if (!allDeptTotals.has(dept)) allDeptTotals.set(dept, newMonths());
-        const acc = allDeptTotals.get(dept)!;
-        data.forEach((m, mi) => { acc[mi].plan += m.plan; acc[mi].actual += m.actual; });
-        styleDetailRow(dr, writeMMRow(dr, `    ${dept}`, data, projTotals));
-        dr++;
+    // Sheet 2: project → departments, then all departments across projects
+    {
+      const { writeRow, writeGroup } = addMMSheet(`Summary by Dept ${year}`, `GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก ${year}`, "โครงการ / แผนก");
+      let dr = headerRow2 + 1;
+      const allDeptTotals = new Map<string, MonthPair>();
+      for (const proj of sortedDeptProjs) {
+        writeGroup(dr++, `${proj.num} — ${proj.name}`);
+        const projTotals = newMonths();
+        for (const [dept, data] of Array.from(proj.depts.entries()).sort(byName)) {
+          if (!allDeptTotals.has(dept)) allDeptTotals.set(dept, newMonths());
+          const acc = allDeptTotals.get(dept)!;
+          data.forEach((m, mi) => { acc[mi].plan += m.plan; acc[mi].actual += m.actual; });
+          writeRow(dr++, `    ${dept}`, data, { acc: projTotals, detail: true });
+        }
+        writeRow(dr, "รวมโครงการ", projTotals);
+        dr += 2;
       }
-      writeMMRow(dr, "รวมโครงการ", projTotals);
-      styleSubtotalRow(ds, dr, dsColCount);
-      dr += 2;
+      if (allDeptTotals.size > 0) {
+        writeGroup(dr++, "รวมทุกโครงการ — แยกตามแผนก");
+        const grand = newMonths();
+        for (const [dept, data] of Array.from(allDeptTotals.entries()).sort(byName)) {
+          writeRow(dr++, `    ${dept}`, data, { acc: grand, detail: true });
+        }
+        writeRow(dr, "รวมทั้งหมด", grand);
+      }
     }
 
-    // Grand summary: every department across all projects
-    if (allDeptTotals.size > 0) {
-      ds.getRow(dr).values = ["รวมทุกโครงการ — แยกตามแผนก"];
-      styleGroupRow(ds, dr, dsColCount);
-      ds.mergeCells(dr, 1, dr, dsColCount);
-      dr++;
-      const grand = newMonths();
-      for (const [dept, data] of Array.from(allDeptTotals.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        styleDetailRow(dr, writeMMRow(dr, `    ${dept}`, data, grand));
-        dr++;
+    // Sheet 3: department → projects (each department sees its projects with Plan/Actual MM)
+    {
+      const { writeRow, writeGroup } = addMMSheet(`Dept by Project ${year}`, `GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ ${year}`, "แผนก / โครงการ");
+      const deptMap = new Map<string, { label: string; data: MonthPair }[]>();
+      for (const proj of sortedDeptProjs) {
+        for (const [dept, data] of Array.from(proj.depts.entries())) {
+          if (!deptMap.has(dept)) deptMap.set(dept, []);
+          deptMap.get(dept)!.push({ label: `    ${proj.num} — ${proj.name}`, data });
+        }
       }
-      writeMMRow(dr, "รวมทั้งหมด", grand);
-      styleSubtotalRow(ds, dr, dsColCount);
+      let dr = headerRow2 + 1;
+      const grand = newMonths();
+      for (const [dept, projs] of Array.from(deptMap.entries()).sort(byName)) {
+        writeGroup(dr++, dept);
+        const deptTotals = newMonths();
+        for (const p of projs) writeRow(dr++, p.label, p.data, { acc: deptTotals, detail: true });
+        deptTotals.forEach((m, mi) => { grand[mi].plan += m.plan; grand[mi].actual += m.actual; });
+        writeRow(dr, `รวม ${dept}`, deptTotals);
+        dr += 2;
+      }
+      if (deptMap.size > 1) writeRow(dr, "รวมทุกแผนก", grand);
     }
   }
 
