@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
 import { isEmployedInWeek } from "@/lib/employment-period";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
+import {
+  holidayWeekdaySet, weekCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours, availableHrs, pctOf,
+} from "@/lib/capacity";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -53,22 +56,35 @@ function weekRange(weekStart: Date) {
 
 // Per-employee utilization for the period, plus the aggregate stats the Dashboard needs.
 // Capacity and required weeks are per employee: only weeks from their startDate count.
+// Chargeable Utilization = project hrs / (capacity - personal leave); see lib/capacity.ts
 async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeks: Date[], isMonth: boolean) {
-  const [allEmployeesRaw, timesheets] = await Promise.all([
+  const [allEmployeesRaw, timesheets, holidayRows] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
       where: { weekStart: tsWeekFilter },
-      include: { employee: true, entries: { where: projEntryFilter } },
+      include: {
+        employee: true,
+        entries: { where: projEntryFilter, include: { project: { select: { projectNumber: true, projectType: true } }, taskCode: { select: { code: true } } } },
+      },
+    }),
+    prisma.holiday.findMany({
+      where: { date: { gte: weeks[0], lt: new Date(weeks[weeks.length - 1].getTime() + 7 * 86400000) } },
+      select: { date: true },
     }),
   ]);
+  const holidays = holidayWeekdaySet(holidayRows);
   const requiredWeeks = new Map(allEmployeesRaw.map((e) => [e.id, weeks.filter((w) => isEmployedInWeek(e, w)).length]));
   const allEmployees = allEmployeesRaw.filter((e) => !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && requiredWeeks.get(e.id)! > 0);
 
-  const aggMap = new Map<string, { hrs: number; done: number; logged: number; lastStatus: string }>();
+  const aggMap = new Map<string, { hrs: number; b: ReturnType<typeof emptyBreakdown>; done: number; logged: number; lastStatus: string }>();
   for (const t of timesheets) {
-    const a = aggMap.get(t.employeeId) ?? { hrs: 0, done: 0, logged: 0, lastStatus: t.status };
+    const a = aggMap.get(t.employeeId) ?? { hrs: 0, b: emptyBreakdown(), done: 0, logged: 0, lastStatus: t.status };
     const weekHrs = t.entries.reduce((s, e) => s + e.totalHrs, 0);
     a.hrs += weekHrs;
+    for (const e of t.entries) {
+      const kind = classifyEntry(e);
+      for (const [day, hrs] of entryDays(t.weekStart, e)) addHours(a.b, kind, day, hrs, holidays);
+    }
     if (weekHrs > 0) a.logged += 1; // any hours entered that week, regardless of status (draft counts)
     if (DONE_STATUSES.includes(t.status)) a.done += 1;
     a.lastStatus = t.status;
@@ -82,13 +98,16 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
 
   for (const emp of allEmployees) {
     const a = aggMap.get(emp.id);
-    const totalHrs = a?.hrs || 0;
     const empWeeks = requiredWeeks.get(emp.id)!;
-    const utilization = Math.round((totalHrs / (40 * empWeeks)) * 100);
+    const b = a?.b ?? emptyBreakdown();
+    const companyHrs = weeks.filter((w) => isEmployedInWeek(emp, w)).reduce((s, w) => s + weekCompanyCapacity(w, holidays), 0);
+    const available = availableHrs(companyHrs, b);
     const status = !a ? "missing" : isMonth ? `${a.done}/${empWeeks} weeks` : a.lastStatus;
     rows.push({
       employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position,
-      hours: totalHrs, utilization, status,
+      hours: b.project + b.overhead, utilization: pctOf(b.project, available), status,
+      companyHrs, availableHrs: available, projectHrs: b.project, overheadHrs: b.overhead, leaveHrs: b.leave,
+      overheadPct: pctOf(b.overhead, available),
       weeksLogged: a?.logged || 0, weeksSubmitted: a?.done || 0,
     });
     if (!submittedIds.has(emp.id)) {

@@ -6,6 +6,7 @@ import {
 import {
   ProjAgg, EmpAgg, ProjTaskAgg, sortByHoursDesc,
 } from "./aggregate";
+import { UTILIZATION_TARGET } from "@/lib/capacity";
 
 export const HRS_FMT = "#,##0.0";
 
@@ -199,7 +200,13 @@ export function writeProjectTaskSheet(
 
 export type UtilizationRow = {
   employeeId: string; name: string; department: string; position: string;
-  hours: number; utilization: number; status: string;
+  hours: number;        // ชม.ทำงาน = โครงการ + Overhead (ไม่รวมวันลา)
+  utilization: number;  // Chargeable Utilization % = projectHrs ÷ availableHrs
+  status: string;
+  companyHrs: number;   // ความจุตามปฏิทินบริษัท (40h/สัปดาห์ − วันหยุดบริษัท)
+  availableHrs: number; // companyHrs − วันลาส่วนตัว
+  projectHrs: number; overheadHrs: number; leaveHrs: number;
+  overheadPct: number;
   weeksLogged: number; weeksSubmitted: number;
 };
 
@@ -212,8 +219,13 @@ export function writeUtilizationSheet(
     { header: "Employee Name", width: 24 },
     { header: "Department", width: 20 },
     { header: "Position", width: 28 },
-    { header: "Total Hours", width: 12 },
-    { header: "Utilization %", width: 14 },
+    { header: "Capacity (h)", width: 12 },
+    { header: "Leave (h)", width: 10 },
+    { header: "Available (h)", width: 13 },
+    { header: "Project (h)", width: 12 },
+    { header: "Overhead (h)", width: 13 },
+    { header: "Chargeable Util. %", width: 17 },
+    { header: "Overhead %", width: 12 },
     { header: "Status", width: 14 },
     { header: "Weeks Logged", width: 14 },
     { header: "Weeks Submitted", width: 16 },
@@ -229,28 +241,30 @@ export function writeUtilizationSheet(
   const writeDataRow = (r: number, row: UtilizationRow, alt: boolean) => {
     ws.getRow(r).values = [
       row.employeeId, row.name, row.department, row.position,
-      row.hours, row.utilization / 100, row.status, row.weeksLogged, row.weeksSubmitted,
+      row.companyHrs, row.leaveHrs, row.availableHrs, row.projectHrs, row.overheadHrs,
+      row.utilization / 100, row.overheadPct / 100, row.status, row.weeksLogged, row.weeksSubmitted,
     ];
-    ws.getRow(r).getCell(5).numFmt = HRS_FMT;
-    ws.getRow(r).getCell(6).numFmt = "0%";
+    for (let c = 5; c <= 9; c++) ws.getRow(r).getCell(c).numFmt = HRS_FMT;
+    ws.getRow(r).getCell(10).numFmt = "0%";
+    ws.getRow(r).getCell(11).numFmt = "0%";
     styleDataRow(ws, r, cols.length, alt);
-    styleStatusCell(ws.getRow(r).getCell(7), row.status);
+    styleStatusCell(ws.getRow(r).getCell(12), row.status);
   };
 
-  // Grouped into >=90% / <90% blocks per the utilization threshold, each with its own labeled band.
-  const meetsTarget = rows.filter((row) => row.utilization >= 90);
-  const belowTarget = rows.filter((row) => row.utilization < 90);
+  // Grouped by the Chargeable Utilization target, each block with its own labeled band.
+  const meetsTarget = rows.filter((row) => row.utilization >= UTILIZATION_TARGET);
+  const belowTarget = rows.filter((row) => row.utilization < UTILIZATION_TARGET);
 
   let r = headerRowNum + 1;
 
-  ws.getRow(r).values = [`>= 90% Utilization  (${meetsTarget.length} employees)`];
+  ws.getRow(r).values = [`>= ${UTILIZATION_TARGET}% Chargeable Utilization  (${meetsTarget.length} employees)`];
   styleGroupRow(ws, r, cols.length);
   ws.mergeCells(r, 1, r, cols.length);
   r++;
   let alt = false;
   for (const row of meetsTarget) { writeDataRow(r, row, alt); alt = !alt; r++; }
 
-  ws.getRow(r).values = [`< 90% Utilization  (${belowTarget.length} employees)`];
+  ws.getRow(r).values = [`< ${UTILIZATION_TARGET}% Chargeable Utilization  (${belowTarget.length} employees)`];
   styleGroupRow(ws, r, cols.length);
   ws.mergeCells(r, 1, r, cols.length);
   r++;
@@ -258,7 +272,7 @@ export function writeUtilizationSheet(
   for (const row of belowTarget) { writeDataRow(r, row, alt); alt = !alt; r++; }
 
   ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: r - 1, column: cols.length } };
-  if (rows.length > 0) addColorScale(ws, `F${headerRowNum + 1}:F${r - 1}`);
+  if (rows.length > 0) addColorScale(ws, `J${headerRowNum + 1}:J${r - 1}`);
   return ws;
 }
 

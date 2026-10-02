@@ -5,14 +5,20 @@ import { useRouter } from "next/navigation";
 
 const MD_APPROVE_DEPTS = ["Management", "Project Management"];
 
-interface MonthMeta   { month: number; name: string; standardHrs: number; }
+interface MonthMeta   { month: number; name: string; standardHrs: number; } // standardHrs = 176 − วันหยุดบริษัท
+interface MonthStats {
+  project: number; overhead: number; leave: number;
+  available: number;  // standardHrs − วันลาส่วนตัว
+  plannable: number;  // available − Overhead (จริง หรือกันเผื่อ)
+  utilization: number; // Chargeable % = project ÷ available
+}
 interface ProjectPlan {
   projectId: string; projectNumber: string; projectName: string;
   planStatus: string; monthPlans: Record<number, number>;
 }
 interface EmpData {
   employee: { id: string; employeeId: string; name: string; department: string; position: string };
-  monthActuals: Record<number, number>;
+  monthStats: Record<number, MonthStats>;
   projects: ProjectPlan[];
 }
 interface DeptData     { name: string; employees: EmpData[]; }
@@ -20,6 +26,7 @@ interface DeptApprovalEntry { department: string; status: string; }
 interface WorkloadData {
   year: number; months: MonthMeta[]; departments: DeptData[];
   deptApprovalMap: Record<string, DeptApprovalEntry[]>;
+  ohAllowancePct?: number;
 }
 
 export default function ResourceApprovalPage() {
@@ -146,6 +153,17 @@ export default function ResourceApprovalPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          <div className="ges-card px-4 py-3 text-xs text-gray-600 leading-relaxed">
+            <span className="font-semibold text-gray-700">วิธีคิด Workload:</span>{" "}
+            ความจุเดือน = 176h − วันหยุดบริษัท (ตัวเลขใต้ชื่อเดือน) ·{" "}
+            <span className="text-gray-500">ว่าง</span> = ความจุ − วันลาส่วนตัว − Overhead
+            (ใช้ชั่วโมงจริง หรือกันเผื่อ {Math.round((data.ohAllowancePct ?? 0.1) * 100)}% ถ้ายังน้อยกว่า) ·{" "}
+            <span className="text-red-600 font-semibold">แดง</span> = แผนเกินชั่วโมงว่าง ·{" "}
+            <span className="text-green-600">A</span> = ชม.โครงการจริง ·{" "}
+            <span className="text-purple-600">OH</span> = Overhead ·{" "}
+            <span className="text-orange-600">ลา</span> = วันลาส่วนตัว ·{" "}
+            U = Chargeable Utilization (ชม.โครงการ ÷ ชม.ที่พร้อมทำงาน)
+          </div>
           {displayDepts(data.departments).map((dept) => (
             <DeptTable
               key={dept.name}
@@ -303,15 +321,20 @@ function DeptTable({ dept, months, canApprove, acting, approveProject, planActio
                     <td className="px-3 py-2 text-xs text-gray-400 italic">{emp.projects.length} โครงการ</td>
                     {months.map((m, i) => {
                       const planned = empMonthTotals[i];
-                      const actual  = emp.monthActuals[m.month] ?? 0;
-                      const over    = planned > m.standardHrs;
+                      const st      = emp.monthStats?.[m.month];
+                      const cap     = st?.plannable ?? m.standardHrs;
+                      const over    = planned > cap;
                       return (
-                        <td key={m.month} className="px-3 py-2 text-center">
+                        <td key={m.month} className="px-3 py-2 text-center"
+                          title={st ? `ความจุ ${m.standardHrs}h · ลา ${st.leave}h · พร้อมทำงาน ${st.available}h · Overhead ${st.overhead}h · ว่างวางแผน ${cap}h` : undefined}>
                           <div className={`font-bold ${over ? "text-red-600" : planned > 0 ? "text-blue-700" : "text-gray-300"}`}>
                             {planned > 0 ? `${planned}h` : "–"}
                           </div>
-                          {actual > 0 && <div className="text-xs text-green-600 mt-0.5">A: {actual}h</div>}
-                          {over && <div className="text-xs text-red-500">+{planned - m.standardHrs}h</div>}
+                          <div className="text-[11px] text-gray-400">ว่าง {cap}h</div>
+                          {st && st.project > 0 && <div className="text-xs text-green-600 mt-0.5">A: {st.project}h · U {st.utilization}%</div>}
+                          {st && st.overhead > 0 && <div className="text-xs text-purple-600">OH: {st.overhead}h</div>}
+                          {st && st.leave > 0 && <div className="text-xs text-orange-600">ลา: {st.leave}h</div>}
+                          {over && <div className="text-xs text-red-500">+{Math.round((planned - cap) * 10) / 10}h</div>}
                         </td>
                       );
                     })}

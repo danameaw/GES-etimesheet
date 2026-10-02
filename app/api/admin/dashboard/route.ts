@@ -4,6 +4,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { isPD, isGesMgmt } from "@/lib/roles";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
+import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
+import {
+  holidayWeekdaySet, monthCompanyCapacity, weekCompanyCapacity, classifyEntry, entryDays,
+  emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, HRS_PER_DAY, UTILIZATION_TARGET,
+} from "@/lib/capacity";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -238,6 +243,12 @@ export async function GET(req: NextRequest) {
     .filter((e) => !LEAVE_CODES.includes(e.taskCode.code))
     .reduce((s, e) => s + e.totalHrs, 0);
   const totalPlanned = Array.from(planByProj.values()).reduce((s, v) => s + v.planned, 0);
+  let totalProjectHours = 0, totalOverheadHours = 0;
+  for (const e of entries) {
+    const kind = classifyEntry(e);
+    if (kind === "project") totalProjectHours += e.totalHrs;
+    else if (kind === "overhead") totalOverheadHours += e.totalHrs;
+  }
 
   // ── Employee matrix (for GES Management dept view) ──────────────────────
   let empActualMatrix: any[] = [];
@@ -346,6 +357,89 @@ export async function GET(req: NextRequest) {
     totalLeaveHrs  = leaveBreakdown.reduce((s, e) => s + e.hours, 0);
   }
 
+  // ── 7. Capacity / Chargeable Utilization (วัดที่ "คน" — ไม่ใช้เมื่อกรองรายโครงการ หรือ PD ล้วน) ──
+  let capacity: null | {
+    employees: number; companyHrs: number; availableHrs: number;
+    projectHrs: number; overheadHrs: number; leaveHrs: number;
+    utilization: number; overheadPct: number; target: number;
+  } = null;
+  const showCapacity = !projectId && (!isPD(role) || isGesMgmt(role)) && (monthParam || weekParam);
+  if (showCapacity) {
+    const DAY = 86400000;
+    let periodStart: Date, periodEnd: Date; // [start, end)
+    if (mode === "month" && monthParam) {
+      const [y, m] = monthParam.split("-").map(Number);
+      periodStart = new Date(Date.UTC(y, m - 1, 1));
+      periodEnd   = new Date(Date.UTC(y, m, 1));
+    } else {
+      periodStart = normalizeDay(new Date(weekParam + "T00:00:00.000Z"));
+      periodEnd   = new Date(periodStart.getTime() + 7 * DAY);
+    }
+    const [capEmployees, capHolidays, capTS] = await Promise.all([
+      prisma.employee.findMany({
+        where: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
+        select: { id: true, employeeId: true, startDate: true },
+      }),
+      prisma.holiday.findMany({ where: { date: { gte: periodStart, lt: periodEnd } }, select: { date: true } }),
+      prisma.timesheet.findMany({
+        where: {
+          weekStart: { gte: new Date(periodStart.getTime() - 7 * DAY - MS_13H), lt: new Date(periodEnd.getTime() + MS_13H) },
+          status: { in: ["submitted", "approved"] },
+          employee: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
+        },
+        include: { entries: { include: { project: { select: { projectNumber: true, projectType: true } }, taskCode: { select: { code: true } } } } },
+      }),
+    ]);
+    const holidays = holidayWeekdaySet(capHolidays);
+    const startKey = toDateKey(periodStart), endKey = toDateKey(periodEnd);
+    const baseCap = mode === "month" && monthParam
+      ? monthCompanyCapacity(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, holidays)
+      : weekCompanyCapacity(periodStart, holidays);
+
+    // ชั่วโมงจริงของแต่ละคนในช่วงเวลา (ตามวันที่จริง)
+    const byEmp = new Map<string, ReturnType<typeof emptyBreakdown>>();
+    for (const ts of capTS) {
+      for (const e of ts.entries) {
+        const kind = classifyEntry(e);
+        for (const [day, hrs] of entryDays(ts.weekStart, e)) {
+          if (day < startKey || day >= endKey) continue;
+          if (!byEmp.has(ts.employeeId)) byEmp.set(ts.employeeId, emptyBreakdown());
+          addHours(byEmp.get(ts.employeeId)!, kind, day, hrs, holidays);
+        }
+      }
+    }
+
+    let companyHrs = 0, available = 0;
+    const tot = emptyBreakdown();
+    let counted = 0;
+    for (const emp of capEmployees) {
+      if (TIMESHEET_EXEMPT_IDS.has(emp.employeeId)) continue;
+      // พนักงานใหม่: หักวันทำงานก่อนวันเริ่มงาน
+      let cap = baseCap;
+      if (emp.startDate) {
+        const sd = toDateKey(normalizeDay(emp.startDate));
+        if (sd >= endKey) continue;
+        for (let t = periodStart.getTime(); toDateKey(new Date(t)) < sd; t += DAY) {
+          const k = toDateKey(new Date(t)); const dow = new Date(t).getUTCDay();
+          if (dow >= 1 && dow <= 5 && !holidays.has(k)) cap -= HRS_PER_DAY;
+        }
+        cap = Math.max(0, cap);
+      }
+      const b = byEmp.get(emp.id) ?? emptyBreakdown();
+      counted++;
+      companyHrs += cap;
+      available  += availableHrs(cap, b);
+      tot.project += b.project; tot.overhead += b.overhead; tot.leave += b.leave;
+    }
+    const r1 = (n: number) => Math.round(n * 10) / 10;
+    capacity = {
+      employees: counted, companyHrs: r1(companyHrs), availableHrs: r1(available),
+      projectHrs: r1(tot.project), overheadHrs: r1(tot.overhead), leaveHrs: r1(tot.leave),
+      utilization: pctOf(tot.project, available), overheadPct: pctOf(tot.overhead, available),
+      target: UTILIZATION_TARGET,
+    };
+  }
+
   return NextResponse.json({
     allProjects,
     planVsActual,
@@ -356,6 +450,11 @@ export async function GET(req: NextRequest) {
     empActualMatrix,
     matrixMonths:    matMonths,
     leaveBreakdown,
-    summary: { totalHours, totalWorkHours, totalPlanned, submittedCount: deduped.length, mode, totalLeaveHrs },
+    summary: {
+      totalHours, totalWorkHours, totalPlanned, submittedCount: deduped.length, mode, totalLeaveHrs,
+      totalProjectHours: Math.round(totalProjectHours * 10) / 10,
+      totalOverheadHours: Math.round(totalOverheadHours * 10) / 10,
+    },
+    capacity,
   });
 }

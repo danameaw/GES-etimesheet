@@ -33,7 +33,16 @@ interface DashData {
   empActualMatrix:  MatrixEmp[];
   matrixMonths:     MatrixMonth[];
   leaveBreakdown:   LeaveRow[];
-  summary:          { totalHours: number; totalWorkHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number };
+  summary:          {
+    totalHours: number; totalWorkHours: number; totalPlanned: number; submittedCount: number; totalEmployees: number; mode: string; totalLeaveHrs: number;
+    totalProjectHours: number; totalOverheadHours: number;
+  };
+  // Chargeable Utilization ของ "คน" ในช่วงเวลา (null เมื่อกรองรายโครงการ หรือ PD)
+  capacity: null | {
+    employees: number; companyHrs: number; availableHrs: number;
+    projectHrs: number; overheadHrs: number; leaveHrs: number;
+    utilization: number; overheadPct: number; target: number;
+  };
 }
 
 export default function DashboardPage() {
@@ -78,8 +87,10 @@ export default function DashboardPage() {
   if (!canAccess) return null;
 
   const summary = data?.summary;
-  const utilizationPct = summary && summary.totalPlanned > 0
-    ? Math.round((summary.totalHours / summary.totalPlanned) * 100) : 0;
+  // % ทำได้ตามแผน = ชม.งานโครงการจริง ÷ ชม.แผน (ไม่ใช่ Utilization — ไม่รวม Overhead/วันลา)
+  const planAttainmentPct = summary && summary.totalPlanned > 0
+    ? Math.round((summary.totalProjectHours / summary.totalPlanned) * 100) : 0;
+  const cap = data?.capacity;
 
   return (
     <div className="space-y-5">
@@ -146,9 +157,18 @@ export default function DashboardPage() {
           {/* ── KPI row ── */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {[
-              { label: "ชั่วโมงจริง",    value: `${data.summary.totalWorkHours}h`, sub: "ไม่รวม Leave",       color: "text-blue-900" },
-              { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: mode === "week" ? "Plan สัปดาห์นี้" : "Plan เดือนนี้", color: utilizationPct > 100 ? "text-red-600" : utilizationPct >= 80 ? "text-green-600" : "text-amber-600" },
+              { label: "ชั่วโมงงานโครงการ", value: `${data.summary.totalProjectHours}h`, sub: `+ Overhead ${data.summary.totalOverheadHours}h · ไม่รวม Leave`, color: "text-blue-900" },
+              { label: "ชั่วโมงแผน",     value: `${data.summary.totalPlanned}h`,  sub: `${mode === "week" ? "Plan สัปดาห์นี้" : "Plan เดือนนี้"} · ทำได้ ${planAttainmentPct}% ของแผน`, color: planAttainmentPct > 100 ? "text-red-600" : planAttainmentPct >= 80 ? "text-green-600" : "text-amber-600" },
               { label: "🏖️ ลา/วันหยุด", value: `${data.summary.totalLeaveHrs ?? 0}h`, sub: "Leave/Holiday hrs", color: "text-orange-600" },
+              ...(cap ? [
+                { label: "Chargeable Utilization", value: `${cap.utilization}%`,
+                  sub: `ชม.โครงการ ${cap.projectHrs}h ÷ พร้อมทำงาน ${cap.availableHrs}h · เป้า ${cap.target}%`,
+                  color: cap.utilization >= cap.target ? "text-green-600" : cap.utilization >= cap.target - 20 ? "text-amber-600" : "text-red-600" },
+                { label: "สัดส่วน Overhead", value: `${cap.overheadPct}%`,
+                  sub: `Overhead ${cap.overheadHrs}h ÷ พร้อมทำงาน ${cap.availableHrs}h`, color: "text-purple-700" },
+                { label: "ชม.พร้อมทำงาน", value: `${cap.availableHrs}h`,
+                  sub: `${cap.employees} คน · ความจุ ${cap.companyHrs}h − ลาส่วนตัว ${cap.leaveHrs}h`, color: "text-gray-800" },
+              ] : []),
             ].map((k) => (
               <div key={k.label} className="ges-card p-4">
                 <p className="text-xs text-gray-500">{k.label}</p>
@@ -198,7 +218,7 @@ export default function DashboardPage() {
                         afterBody: (items) => {
                           const p = data.planVsActual[items[0].dataIndex];
                           const pct = p.planned > 0 ? Math.round((p.actual/p.planned)*100) : 0;
-                          return [`Utilization: ${pct}%`];
+                          return [`ทำได้ตามแผน: ${pct}%`];
                         },
                       }},
                     },
