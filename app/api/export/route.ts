@@ -422,6 +422,113 @@ export async function GET(req: NextRequest) {
       r++;
       r++; // blank separator
     }
+
+    // ── Sheet 2: per-project summary by department ──
+    // Plan = employee plans grouped by the employee's department (same as Workload / Dashboard);
+    // Actual = hours logged by employees of that department
+    type MonthPair = { plan: number; actual: number }[];
+    const newMonths = (): MonthPair => months.map(() => ({ plan: 0, actual: 0 }));
+    const deptProjMap = new Map<string, { num: string; name: string; depts: Map<string, MonthPair> }>();
+    const getDeptRow = (projId: string, num: string, name: string, dept: string) => {
+      if (!deptProjMap.has(projId)) deptProjMap.set(projId, { num, name, depts: new Map() });
+      const p = deptProjMap.get(projId)!;
+      if (!p.depts.has(dept)) p.depts.set(dept, newMonths());
+      return p.depts.get(dept)!;
+    };
+    for (const p of plans) {
+      getDeptRow(p.projectId, p.project.projectNumber, p.project.projectName, p.employee.department || "(ไม่ระบุแผนก)")[p.month - 1].plan += p.plannedHrs;
+    }
+    for (const e of rawEntries) {
+      if (e.totalHrs === 0) continue;
+      const d = new Date(e.timesheet.weekStart);
+      if (d.getUTCFullYear() !== year) continue;
+      getDeptRow(e.project.id, e.project.projectNumber, e.project.projectName, e.timesheet.employee.department || "(ไม่ระบุแผนก)")[d.getUTCMonth()].actual += e.totalHrs;
+    }
+
+    const dsColCount = 1 + months.length * 2 + 3;
+    const ds = wb.addWorksheet(`Summary by Dept ${year}`);
+    ds.columns = [{ width: 40 }, ...Array(months.length * 2).fill({ width: 10 }), { width: 14 }, { width: 14 }, { width: 10 }];
+    addTitleBand(ds, `GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก ${year}`, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   Generated: ${generatedAt}`, dsColCount);
+
+    const dsHead1: string[] = ["โครงการ / แผนก"];
+    const dsHead2: string[] = [""];
+    for (const m of months) {
+      dsHead1.push(`${MONTH_NAMES[m-1]} ${year}`, "");
+      dsHead2.push("Plan (MM)", "Actual (MM)");
+    }
+    dsHead1.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
+    dsHead2.push("", "", "");
+    ds.getRow(headerRow1).values = dsHead1;
+    ds.getRow(headerRow2).values = dsHead2;
+    for (const m of months) ds.mergeCells(headerRow1, 2 + (m - 1) * 2, headerRow1, 3 + (m - 1) * 2);
+    ds.mergeCells(headerRow1, 1, headerRow2, 1);
+    const dsSumStart = 2 + months.length * 2;
+    for (let c = dsSumStart; c < dsSumStart + 3; c++) ds.mergeCells(headerRow1, c, headerRow2, c);
+    styleHeaderRow(ds, headerRow1, dsColCount);
+    styleHeaderRow(ds, headerRow2, dsColCount);
+    ds.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow2 }];
+
+    // Writes one label + 12×(plan, actual) + totals + variance row; adds into `acc` when given
+    const writeMMRow = (rowNo: number, label: string, data: MonthPair, acc?: MonthPair) => {
+      const row: (string | number)[] = [label];
+      let tPlan = 0, tActual = 0;
+      data.forEach(({ plan, actual }, mi) => {
+        row.push(fmtMM(plan), fmtMM(actual));
+        tPlan += plan; tActual += actual;
+        if (acc) { acc[mi].plan += plan; acc[mi].actual += actual; }
+      });
+      const variance = tPlan > 0 ? Math.round(((tActual - tPlan) / tPlan) * 100) : null;
+      row.push(fmtMM(tPlan), fmtMM(tActual), variance !== null ? `${variance}%` : "–");
+      ds.getRow(rowNo).values = row;
+      return variance;
+    };
+    const styleDetailRow = (rowNo: number, variance: number | null) => {
+      for (let c = 1; c <= dsColCount; c++) {
+        const cell = ds.getRow(rowNo).getCell(c);
+        cell.border = { top: { style: "hair", color: { argb: COLORS.border } }, bottom: { style: "hair", color: { argb: COLORS.border } } };
+        cell.font = { size: 9.5, color: { argb: COLORS.textDark } };
+      }
+      if (variance !== null) {
+        ds.getRow(rowNo).getCell(dsColCount).font = { size: 9.5, bold: true, color: { argb: variance < 0 ? COLORS.danger : COLORS.success } };
+      }
+    };
+
+    let dr = headerRow2 + 1;
+    const allDeptTotals = new Map<string, MonthPair>();
+    const sortedDeptProjs = Array.from(deptProjMap.values()).sort((a, b) => a.num.localeCompare(b.num));
+    for (const proj of sortedDeptProjs) {
+      ds.getRow(dr).values = [`${proj.num} — ${proj.name}`];
+      styleGroupRow(ds, dr, dsColCount);
+      ds.mergeCells(dr, 1, dr, dsColCount);
+      dr++;
+
+      const projTotals = newMonths();
+      for (const [dept, data] of Array.from(proj.depts.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        if (!allDeptTotals.has(dept)) allDeptTotals.set(dept, newMonths());
+        const acc = allDeptTotals.get(dept)!;
+        data.forEach((m, mi) => { acc[mi].plan += m.plan; acc[mi].actual += m.actual; });
+        styleDetailRow(dr, writeMMRow(dr, `    ${dept}`, data, projTotals));
+        dr++;
+      }
+      writeMMRow(dr, "รวมโครงการ", projTotals);
+      styleSubtotalRow(ds, dr, dsColCount);
+      dr += 2;
+    }
+
+    // Grand summary: every department across all projects
+    if (allDeptTotals.size > 0) {
+      ds.getRow(dr).values = ["รวมทุกโครงการ — แยกตามแผนก"];
+      styleGroupRow(ds, dr, dsColCount);
+      ds.mergeCells(dr, 1, dr, dsColCount);
+      dr++;
+      const grand = newMonths();
+      for (const [dept, data] of Array.from(allDeptTotals.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        styleDetailRow(dr, writeMMRow(dr, `    ${dept}`, data, grand));
+        dr++;
+      }
+      writeMMRow(dr, "รวมทั้งหมด", grand);
+      styleSubtotalRow(ds, dr, dsColCount);
+    }
   }
 
   const filename = type === "plan-actual"
