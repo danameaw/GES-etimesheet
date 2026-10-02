@@ -182,6 +182,7 @@ export async function GET(req: NextRequest) {
   }
 
   const wb = new ExcelJS.Workbook();
+  let planActualTag = ""; // set by the plan-actual report for its filename
   setWorkbookMeta(wb);
   const weekLabel = periodLabel;
   const generatedAt = format(new Date(), "dd/MM/yyyy HH:mm");
@@ -301,21 +302,42 @@ export async function GET(req: NextRequest) {
       if (!scopeDept) return NextResponse.json({ error: "No department assigned" }, { status: 403 });
     }
 
+    // Period: fromMonth/toMonth ("yyyy-MM", may span years) — falls back to ?year= (Jan–Dec)
     const yearParam = searchParams.get("year");
-    const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
-    const months = [1,2,3,4,5,6,7,8,9,10,11,12];
+    const fallbackYear = yearParam ? parseInt(yearParam) : new Date().getFullYear();
+    const parseYm = (v: string | null) => {
+      const mt = v?.match(/^(\d{4})-(\d{2})$/);
+      return mt && Number(mt[2]) >= 1 && Number(mt[2]) <= 12 ? { y: Number(mt[1]), m: Number(mt[2]) } : null;
+    };
+    let fromYm = parseYm(searchParams.get("fromMonth")) ?? { y: fallbackYear, m: 1 };
+    let toYm   = parseYm(searchParams.get("toMonth"))   ?? { y: fromYm.y, m: 12 };
+    if (toYm.y * 12 + toYm.m < fromYm.y * 12 + fromYm.m) [fromYm, toYm] = [toYm, fromYm];
+    const months: { y: number; m: number }[] = [];
+    for (let i = fromYm.y * 12 + fromYm.m - 1; i <= toYm.y * 12 + toYm.m - 1 && months.length < 36; i++) {
+      months.push({ y: Math.floor(i / 12), m: (i % 12) + 1 });
+    }
+    const monthIdx = new Map(months.map((mo, i) => [`${mo.y}-${mo.m}`, i]));
+    const idxOf = (y: number, m: number) => monthIdx.get(`${y}-${m}`);
+    const first = months[0], last = months[months.length - 1];
+    const isCalendarYear = months.length === 12 && first.m === 1;
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    // sheet-name safe (≤ 15 chars) and human-readable period labels
+    const periodTag = isCalendarYear ? `${first.y}` : `${first.y}-${pad2(first.m)}~${last.y}-${pad2(last.m)}`;
+    const periodText = isCalendarYear ? `${first.y}` : `${MONTH_NAMES[first.m - 1]} ${first.y} – ${MONTH_NAMES[last.m - 1]} ${last.y}`;
+    const monthLabel = (mo: { y: number; m: number }) => `${MONTH_NAMES[mo.m - 1]} ${mo.y}`;
+    planActualTag = periodTag.replace("~", "_to_");
     const LEAVE_CODES = LEAVE_TASK_CODES;
 
     const projIdsParam = searchParams.get("projectIds");
     const projIdFilter = projIdsParam ? projIdsParam.split(",").filter(Boolean) : null;
     const projWhere = projIdFilter ? { projectId: { in: projIdFilter } } : {};
 
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd   = new Date(Date.UTC(year + 1, 0, 1));
+    const rangeStart = new Date(Date.UTC(first.y, first.m - 1, 1));
+    const rangeEnd   = new Date(Date.UTC(last.y, last.m, 1));
 
     const [plans, rawEntries] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
-        where: { year, ...projWhere, ...(scopeDept ? { employee: { department: scopeDept } } : {}) },
+        where: { year: { gte: first.y, lte: last.y }, ...projWhere, ...(scopeDept ? { employee: { department: scopeDept } } : {}) },
         include: {
           employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
           project:  { select: { id: true, projectNumber: true, projectName: true } },
@@ -323,9 +345,9 @@ export async function GET(req: NextRequest) {
       }),
       prisma.timesheetEntry.findMany({
         where: {
-          // ทุกสัปดาห์ที่มีวันตกในปีนี้ — ชั่วโมงแบ่งเข้าเดือนตามวันที่จริง
+          // ทุกสัปดาห์ที่มีวันตกในช่วงที่เลือก — ชั่วโมงแบ่งเข้าเดือนตามวันที่จริง
           timesheet: {
-            weekStart: weekStartFilterForRange(yearStart, yearEnd),
+            weekStart: weekStartFilterForRange(rangeStart, rangeEnd),
             status: { in: DONE_STATUSES },
             ...(scopeDept ? { employee: { department: scopeDept } } : {}),
           },
@@ -357,35 +379,38 @@ export async function GET(req: NextRequest) {
     };
 
     for (const p of plans) {
+      const i = idxOf(p.year, p.month);
+      if (i === undefined) continue;
       const proj = getProj(p.projectId, p.project.projectNumber, p.project.projectName);
       const emp  = getEmp(proj, p.employee.id, p.employee.employeeId, p.employee.name, p.employee.department, p.employee.position ?? "");
-      emp.months[p.month - 1].plan += p.plannedHrs;
+      emp.months[i].plan += p.plannedHrs;
     }
 
     for (const e of rawEntries) {
       if (e.totalHrs === 0) continue;
       const emp0 = e.timesheet.employee;
       for (const [y, m, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
-        if (y !== year) continue;
+        const i = idxOf(y, m);
+        if (i === undefined) continue;
         const proj = getProj(e.project.id, e.project.projectNumber, e.project.projectName);
         const emp  = getEmp(proj, emp0.id, emp0.employeeId, emp0.name, emp0.department, emp0.position ?? "");
-        emp.months[m - 1].actual += hrs;
+        emp.months[i].actual += hrs;
       }
     }
 
     const colCount = 4 + months.length * 2 + 3;
-    const ws = wb.addWorksheet(`Plan vs Actual ${year}`, { views: [{ state: "frozen", xSplit: 4, ySplit: 5 }] });
+    const ws = wb.addWorksheet(`Plan vs Actual ${periodTag}`, { views: [{ state: "frozen", xSplit: 4, ySplit: 5 }] });
     ws.columns = [
       { width: 28 }, { width: 13 }, { width: 28 }, { width: 18 },
       ...Array(months.length * 2).fill({ width: 10 }),
       { width: 14 }, { width: 14 }, { width: 10 },
     ];
-    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${year}`, `หน่วย: Man-Month (176 ชม.)   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, colCount);
+    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${periodText}`, `หน่วย: Man-Month (176 ชม.)   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, colCount);
 
     const headerMonth: (string)[] = ["โครงการ / พนักงาน", "รหัสพนักงาน", "ตำแหน่ง", "แผนก"];
     const headerSub: string[] = ["", "", "", ""];
-    for (const m of months) {
-      headerMonth.push(`${MONTH_NAMES[m-1]} ${year}`, "");
+    for (const mo of months) {
+      headerMonth.push(monthLabel(mo), "");
       headerSub.push("Plan (MM)", "Actual (MM)");
     }
     headerMonth.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
@@ -394,10 +419,7 @@ export async function GET(req: NextRequest) {
     const headerRow1 = 3, headerRow2 = 4;
     ws.getRow(headerRow1).values = headerMonth;
     ws.getRow(headerRow2).values = headerSub;
-    for (const m of months) {
-      const startCol = 5 + (m - 1) * 2;
-      ws.mergeCells(headerRow1, startCol, headerRow1, startCol + 1);
-    }
+    months.forEach((_, i) => ws.mergeCells(headerRow1, 5 + i * 2, headerRow1, 6 + i * 2));
     ws.mergeCells(headerRow1, 1, headerRow2, 1);
     ws.mergeCells(headerRow1, 2, headerRow2, 2);
     ws.mergeCells(headerRow1, 3, headerRow2, 3);
@@ -424,7 +446,7 @@ export async function GET(req: NextRequest) {
       for (const emp of sortedEmps) {
         const row: (string | number)[] = [emp.name, emp.employeeId, emp.position, emp.dept];
         let totalPlan = 0, totalActual = 0;
-        for (let mi = 0; mi < 12; mi++) {
+        for (let mi = 0; mi < months.length; mi++) {
           const { plan, actual } = emp.months[mi];
           row.push(fmtMM(plan), fmtMM(actual));
           totalPlan += plan; totalActual += actual;
@@ -472,13 +494,16 @@ export async function GET(req: NextRequest) {
       return p.depts.get(dept)!;
     };
     for (const p of plans) {
-      getDeptRow(p.projectId, p.project.projectNumber, p.project.projectName, p.employee.department || "(ไม่ระบุแผนก)")[p.month - 1].plan += p.plannedHrs;
+      const i = idxOf(p.year, p.month);
+      if (i === undefined) continue;
+      getDeptRow(p.projectId, p.project.projectNumber, p.project.projectName, p.employee.department || "(ไม่ระบุแผนก)")[i].plan += p.plannedHrs;
     }
     for (const e of rawEntries) {
       if (e.totalHrs === 0) continue;
       for (const [y, m, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
-        if (y !== year) continue;
-        getDeptRow(e.project.id, e.project.projectNumber, e.project.projectName, e.timesheet.employee.department || "(ไม่ระบุแผนก)")[m - 1].actual += hrs;
+        const i = idxOf(y, m);
+        if (i === undefined) continue;
+        getDeptRow(e.project.id, e.project.projectNumber, e.project.projectName, e.timesheet.employee.department || "(ไม่ระบุแผนก)")[i].actual += hrs;
       }
     }
 
@@ -490,15 +515,15 @@ export async function GET(req: NextRequest) {
       addTitleBand(ws, title, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, dsColCount);
       const head1: string[] = [firstHeader];
       const head2: string[] = [""];
-      for (const m of months) {
-        head1.push(`${MONTH_NAMES[m-1]} ${year}`, "");
+      for (const mo of months) {
+        head1.push(monthLabel(mo), "");
         head2.push("Plan (MM)", "Actual (MM)");
       }
       head1.push("รวม Plan (MM)", "รวม Actual (MM)", "Variance %");
       head2.push("", "", "");
       ws.getRow(headerRow1).values = head1;
       ws.getRow(headerRow2).values = head2;
-      for (const m of months) ws.mergeCells(headerRow1, 2 + (m - 1) * 2, headerRow1, 3 + (m - 1) * 2);
+      months.forEach((_, i) => ws.mergeCells(headerRow1, 2 + i * 2, headerRow1, 3 + i * 2));
       ws.mergeCells(headerRow1, 1, headerRow2, 1);
       const sumStart = 2 + months.length * 2;
       for (let c = sumStart; c < sumStart + 3; c++) ws.mergeCells(headerRow1, c, headerRow2, c);
@@ -540,7 +565,7 @@ export async function GET(req: NextRequest) {
 
     // Sheet 2: project → departments, then all departments across projects
     {
-      const { writeRow, writeGroup } = addMMSheet(`Summary by Dept ${year}`, `GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก ${year}`, "โครงการ / แผนก");
+      const { writeRow, writeGroup } = addMMSheet(`Summary by Dept ${periodTag}`, `GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก ${periodText}`, "โครงการ / แผนก");
       let dr = headerRow2 + 1;
       const allDeptTotals = new Map<string, MonthPair>();
       for (const proj of sortedDeptProjs) {
@@ -567,7 +592,7 @@ export async function GET(req: NextRequest) {
 
     // Sheet 3: department → projects (each department sees its projects with Plan/Actual MM)
     {
-      const { writeRow, writeGroup } = addMMSheet(`Dept by Project ${year}`, `GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ ${year}`, "แผนก / โครงการ");
+      const { writeRow, writeGroup } = addMMSheet(`Dept by Project ${periodTag}`, `GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ ${periodText}`, "แผนก / โครงการ");
       const deptMap = new Map<string, { label: string; data: MonthPair }[]>();
       for (const proj of sortedDeptProjs) {
         for (const [dept, data] of Array.from(proj.depts.entries())) {
@@ -590,7 +615,7 @@ export async function GET(req: NextRequest) {
   }
 
   const filename = type === "plan-actual"
-    ? `GES_PlanActual_${searchParams.get("year") || new Date().getFullYear()}${role !== "admin" ? "_dept" : ""}_${format(new Date(), "yyyyMMdd")}.xlsx`
+    ? `GES_PlanActual_${planActualTag}${role !== "admin" ? "_dept" : ""}_${format(new Date(), "yyyyMMdd")}.xlsx`
     : `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
   const buf = await wb.xlsx.writeBuffer();

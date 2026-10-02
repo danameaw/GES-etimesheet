@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import PlanActualExportBtn from "@/components/PlanActualExportBtn";
 
 const MD_APPROVE_DEPTS = ["Management", "Project Management"];
 
@@ -103,11 +104,9 @@ export default function ResourceApprovalPage() {
             <button onClick={() => setYear(y => y + 1)} className="p-1.5 rounded-lg border hover:bg-gray-100">▶</button>
             <button onClick={load} className="ml-2 text-xs text-gray-500 hover:text-blue-600 border rounded px-2 py-1">🔄</button>
             {["ges_management", "ges_pd"].includes(role) && (
-              <a href={`/api/export?type=plan-actual&year=${year}`}
-                title="Excel: Plan vs Actual รายคน + สรุปรายโครงการแยกตามแผนก (เฉพาะแผนกที่คุณดูแล)"
-                className="ml-2 ges-btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
-                📋 Export Plan vs Actual
-              </a>
+              <span className="ml-2">
+                <PlanActualExportBtn key={year} defaultYear={year} label="📋 Export Plan vs Actual" scopeNote="เฉพาะแผนกที่คุณดูแล" />
+              </span>
             )}
           </div>
         )}
