@@ -26,7 +26,23 @@ interface ImportRow {
   position: string;
   level: string;
   role: string;
+  startDate: string;   // "yyyy-MM-dd" or ""
+  managedDept: string;
   errors: string[];
+}
+
+// Excel cell → "yyyy-MM-dd" ("" = empty, null = unreadable). Accepts a date cell, yyyy-MM-dd or d/M/yyyy.
+function parseImportDate(v: unknown): string | null {
+  if (v === "" || v === null || v === undefined) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (typeof v === "number") {
+    const d = XLSX.SSF.parse_date_code(v);
+    return d ? `${d.y}-${pad(d.m)}-${pad(d.d)}` : null;
+  }
+  const t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return m ? `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}` : null;
 }
 
 const ROLES = [
@@ -155,10 +171,10 @@ export default function EmployeesPage() {
 
     // Data sheet
     const ws = XLSX.utils.aoa_to_sheet([
-      ["employeeId", "name", "department", "position", "level", "role"],
-      ["GES001", "Somchai Prasertphon", "Engineering", "Process Engineer", "Engineer I", "employee"],
+      ["employeeId", "name", "department", "position", "level", "role", "startDate", "managedDept"],
+      ["GES001", "Somchai Prasertphon", "Engineering", "Process Engineer", "Engineer I", "employee", "2026-10-01", ""],
     ]);
-    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 12 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 26 }, { wch: 24 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 18 }];
     XLSX.utils.book_append_sheet(wb, ws, "Employees");
 
     // Instructions sheet
@@ -169,7 +185,9 @@ export default function EmployeesPage() {
       ["department", "Yes", DEPARTMENTS.join(", ")],
       ["position", "Yes", "Job title e.g. Process Engineer"],
       ["level", "No", "e.g. Engineer I, Senior Engineer II"],
-      ["role", "No", "employee | pm | pd | admin  (default: employee)"],
+      ["role", "No", "employee | pd | ges_management | ges_pd | admin | md  (default: employee)"],
+      ["startDate", "No", "วันเริ่มงาน yyyy-MM-dd หรือ d/M/yyyy — เว้นว่างสำหรับพนักงานเดิม"],
+      ["managedDept", "No", "เฉพาะ ges_management / ges_pd: แผนกที่ดูแล (" + DEPARTMENTS.join(", ") + ")"],
     ]);
     inst["!cols"] = [{ wch: 14 }, { wch: 10 }, { wch: 80 }];
     XLSX.utils.book_append_sheet(wb, inst, "Instructions");
@@ -197,7 +215,11 @@ export default function EmployeesPage() {
         else if (!DEPARTMENTS.includes(r.department)) errs.push(`department "${r.department}" ไม่ถูกต้อง`);
         if (!r.position) errs.push("position ว่าง");
         const role = String(r.role || "").toLowerCase();
-        if (role && !["employee", "pd", "ges_management", "admin", "md"].includes(role)) errs.push(`role "${r.role}" ไม่ถูกต้อง`);
+        if (role && !["employee", "pd", "ges_management", "ges_pd", "admin", "md"].includes(role)) errs.push(`role "${r.role}" ไม่ถูกต้อง`);
+        const startDate = parseImportDate(r.startDate);
+        if (startDate === null) errs.push(`startDate "${r.startDate}" อ่านไม่ได้ (ใช้ yyyy-MM-dd)`);
+        const managedDept = String(r.managedDept || "").trim();
+        if (managedDept && !DEPARTMENTS.includes(managedDept)) errs.push(`managedDept "${managedDept}" ไม่ถูกต้อง`);
         return {
           rowNum: i + 2,
           employeeId: empId,
@@ -206,6 +228,8 @@ export default function EmployeesPage() {
           position: String(r.position || ""),
           level: String(r.level || ""),
           role: role || "employee",
+          startDate: startDate ?? "",
+          managedDept,
           errors: errs,
         };
       });
@@ -613,6 +637,8 @@ export default function EmployeesPage() {
                         <th>ตำแหน่ง</th>
                         <th>Level</th>
                         <th>Role</th>
+                        <th>เริ่มงาน</th>
+                        <th>แผนกที่ดูแล</th>
                         <th>สถานะ</th>
                       </tr>
                     </thead>
@@ -626,6 +652,8 @@ export default function EmployeesPage() {
                           <td>{row.position || "—"}</td>
                           <td>{row.level || "—"}</td>
                           <td>{row.role || "—"}</td>
+                          <td>{row.startDate ? fmtDate(row.startDate) : "—"}</td>
+                          <td>{row.managedDept || "—"}</td>
                           <td>
                             {row.errors.length === 0 ? (
                               <span className="text-green-700 font-medium">✓ OK</span>

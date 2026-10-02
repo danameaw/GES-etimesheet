@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { parseDateOnly } from "@/lib/employment-period";
 
 const DEPARTMENTS = [
   "Management", "Project Management", "Engineering", "Construction",
@@ -43,6 +44,8 @@ export async function POST(req: NextRequest) {
           position: String(row.position || "").trim(),
           level: String(row.level || "").trim(),
           role: ROLES.includes(String(row.role || "").toLowerCase()) ? String(row.role).toLowerCase() : "employee",
+          managedDept: DEPARTMENTS.includes(String(row.managedDept || "").trim()) ? String(row.managedDept).trim() : "",
+          startDate: parseDateOnly(row.startDate),
           isActive: true,
         },
       });
