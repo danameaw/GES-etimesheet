@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { isPD, isGesMgmt } from "@/lib/roles";
+import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest) {
   for (const e of entries) catMap.set(e.taskCode.category, (catMap.get(e.taskCode.category) || 0) + e.totalHrs);
   const taskBreakdown = Array.from(catMap.entries()).map(([category, hours]) => ({ category, hours })).sort((a, b) => b.hours - a.hours);
 
-  const LEAVE_CODES = ["1001", "1002", "1003", "1004", "1005"];
+  const LEAVE_CODES = LEAVE_TASK_CODES;
 
   // ── 3. Top Employees (ไม่รวม Leave/Holiday เพื่อให้สอดคล้องกับ KPI ชั่วโมงจริง) ──
   const empMap = new Map<string, { name: string; hours: number; department: string }>();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
 import { isEmployedInWeek } from "@/lib/employment-period";
+import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -270,7 +271,7 @@ export async function GET(req: NextRequest) {
     const yearParam = searchParams.get("year");
     const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
     const months = [1,2,3,4,5,6,7,8,9,10,11,12];
-    const LEAVE_CODES = ["1001","1002","1003","1004","1005"];
+    const LEAVE_CODES = LEAVE_TASK_CODES;
 
     const projIdsParam = searchParams.get("projectIds");
     const projIdFilter = projIdsParam ? projIdsParam.split(",").filter(Boolean) : null;
