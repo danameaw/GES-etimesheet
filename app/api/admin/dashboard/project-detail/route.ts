@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { entryHoursInRange, weekStartFilterForRange } from "@/lib/capacity";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 
@@ -27,14 +28,12 @@ export async function GET(req: NextRequest) {
     entries: { some: { projectId } },
   };
 
+  // Month: ทุกสัปดาห์ที่มีวันตกในเดือน แล้วนับเฉพาะชั่วโมงของวันในเดือน
+  let monthRange: { start: Date; end: Date } | null = null;
   if (monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
-    const mStart = new Date(Date.UTC(y, m - 1, 1));
-    const mEnd   = new Date(Date.UTC(y, m,     1));
-    timesheetWhere.weekStart = {
-      gte: new Date(mStart.getTime() - MS_13H),
-      lt:  new Date(mEnd.getTime()   + MS_13H),
-    };
+    monthRange = { start: new Date(Date.UTC(y, m - 1, 1)), end: new Date(Date.UTC(y, m, 1)) };
+    timesheetWhere.weekStart = weekStartFilterForRange(monthRange.start, monthRange.end);
   } else if (weekParam) {
     const wStart = new Date(weekParam + "T00:00:00.000Z");
     timesheetWhere.weekStart = {
@@ -55,7 +54,8 @@ export async function GET(req: NextRequest) {
   // Per-employee actual hours on this project
   const empActualMap = new Map<string, { name: string; employeeId: string; department: string; actualHrs: number }>();
   for (const ts of timesheets) {
-    const hrs = ts.entries.reduce((s, e) => s + e.totalHrs, 0);
+    const hrs = ts.entries.reduce((s, e) =>
+      s + (monthRange ? entryHoursInRange(ts.weekStart, e, monthRange.start, monthRange.end) : e.totalHrs), 0);
     if (hrs === 0) continue;
     const existing = empActualMap.get(ts.employeeId);
     if (existing) existing.actualHrs += hrs;
@@ -67,21 +67,23 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Planned hours per department from ResourcePlanMonthly
-  let planRows: any[] = [];
+  // Planned hours per department = employee plans grouped by employee department
+  // (same source as Workload / Dashboard / Plan vs Actual export)
+  const planWhere: any = { projectId };
   if (monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
-    planRows = await prisma.resourcePlanMonthly.findMany({
-      where: { projectId, year: y, month: m },
-    });
-  } else {
-    // For week mode, get the full plan for the project
-    planRows = await prisma.resourcePlanMonthly.findMany({ where: { projectId } });
+    Object.assign(planWhere, { year: y, month: m });
   }
+  // week mode: full plan for the project
+  const planRows = await prisma.resourcePlanEmployeeMonthly.findMany({
+    where: planWhere,
+    include: { employee: { select: { department: true } } },
+  });
 
   const planByDept: Record<string, number> = {};
   for (const p of planRows) {
-    planByDept[p.department] = (planByDept[p.department] || 0) + p.plannedHrs;
+    const dept = p.employee.department;
+    planByDept[dept] = (planByDept[dept] || 0) + p.plannedHrs;
   }
 
   // Group actual per department

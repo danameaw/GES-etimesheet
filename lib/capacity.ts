@@ -82,7 +82,29 @@ export function entryDays(weekStart: Date, entry: Partial<Record<DayField, numbe
   return out;
 }
 
-export type HoursBreakdown = { project: number; overhead: number; leave: number };
+/** แบ่งชั่วโมงของ entry ตามเดือนของวันที่จริง: [[year, month(1–12), hrs], ...] */
+export function entryMonthHours(weekStart: Date, entry: Partial<Record<DayField, number>>): [number, number, number][] {
+  const acc = new Map<string, number>();
+  for (const [day, hrs] of entryDays(weekStart, entry)) {
+    const k = day.slice(0, 7);
+    acc.set(k, (acc.get(k) ?? 0) + hrs);
+  }
+  return Array.from(acc.entries()).map(([k, hrs]) => [Number(k.slice(0, 4)), Number(k.slice(5, 7)), hrs]);
+}
+
+/** ชั่วโมงของ entry เฉพาะวันที่อยู่ในช่วง [start, end) */
+export function entryHoursInRange(weekStart: Date, entry: Partial<Record<DayField, number>>, start: Date, end: Date): number {
+  const s = toDateKey(start), e = toDateKey(end);
+  return entryDays(weekStart, entry).reduce((sum, [day, hrs]) => (day >= s && day < e ? sum + hrs : sum), 0);
+}
+
+/** ตัวกรอง weekStart ที่ครอบคลุมทุกสัปดาห์ที่มีวันตกอยู่ในช่วง [start, end) (เผื่อ ±13h ของข้อมูลเก่า) */
+export function weekStartFilterForRange(start: Date, end: Date) {
+  const MS_13H = 13 * 60 * 60 * 1000;
+  return { gte: new Date(start.getTime() - 6 * DAY_MS - MS_13H), lt: new Date(end.getTime() + MS_13H) };
+}
+
+export type HoursBreakdown ={ project: number; overhead: number; leave: number };
 export const emptyBreakdown = (): HoursBreakdown => ({ project: 0, overhead: 0, leave: 0 });
 
 /** บวกชั่วโมง 1 วันเข้า breakdown — วันลาที่ตรงกับวันหยุดบริษัทไม่นับเป็นวันลาส่วนตัว */

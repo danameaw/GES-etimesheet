@@ -8,6 +8,7 @@ import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
 import {
   holidayWeekdaySet, monthCompanyCapacity, weekCompanyCapacity, classifyEntry, entryDays,
   emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, HRS_PER_DAY, UTILIZATION_TARGET,
+  entryMonthHours, entryHoursInRange, weekStartFilterForRange,
 } from "@/lib/capacity";
 
 const MS_13H = 13 * 60 * 60 * 1000;
@@ -81,15 +82,18 @@ export async function GET(req: NextRequest) {
   });
 
   // ── Time filter ──
+  // Month mode: ดึงทุกสัปดาห์ที่มีวันตกในเดือน แล้วตัดชั่วโมงเฉพาะวันที่อยู่ในเดือน (สัปดาห์คร่อมเดือนแบ่งถูกต้อง)
   let dateFilter: any = {};
+  let monthRange: { start: Date; end: Date } | null = null;
   if (mode === "month" && monthParam) {
     const [y, m] = monthParam.split("-").map(Number);
-    const s = new Date(Date.UTC(y, m - 1, 1));
-    const e = new Date(Date.UTC(y, m, 1));
-    dateFilter = { gte: new Date(s.getTime() - MS_13H), lt: new Date(e.getTime() + MS_13H) };
+    monthRange = { start: new Date(Date.UTC(y, m - 1, 1)), end: new Date(Date.UTC(y, m, 1)) };
+    dateFilter = weekStartFilterForRange(monthRange.start, monthRange.end);
   } else if (weekParam) {
     dateFilter = weekRange(new Date(weekParam + "T00:00:00.000Z"));
   }
+  const hrsInPeriod = (weekStart: Date, e: any): number =>
+    monthRange ? entryHoursInRange(weekStart, e, monthRange.start, monthRange.end) : e.totalHrs;
 
   // ── Timesheets ── (นับเฉพาะ employee ที่ยัง active เท่านั้น)
   const tsWhere: any = { status: { in: ["submitted", "approved"] }, employee: { isActive: true } };
@@ -119,7 +123,7 @@ export async function GET(req: NextRequest) {
   });
 
   const entries = deduped.flatMap((ts) =>
-    ts.entries.filter((e) => e.totalHrs > 0).map((e) => ({ ...e, ts }))
+    ts.entries.map((e) => ({ ...e, totalHrs: hrsInPeriod(ts.weekStart, e), ts })).filter((e) => e.totalHrs > 0)
   );
 
   // ── 1. Plan vs Actual ──
@@ -207,7 +211,16 @@ export async function GET(req: NextRequest) {
       select: { projectId: true, year: true, month: true, plannedHrs: true },
     }),
     prisma.timesheetEntry.findMany({
-      where: { projectId: { in: matProjIds } },
+      where: {
+        projectId: { in: matProjIds },
+        timesheet: {
+          status: { in: ["submitted", "approved"] },
+          weekStart: weekStartFilterForRange(
+            new Date(Date.UTC(matMonths[0].year, matMonths[0].month - 1, 1)),
+            new Date(Date.UTC(matMonths[matMonths.length - 1].year, matMonths[matMonths.length - 1].month, 1)),
+          ),
+        },
+      },
       include: { timesheet: { select: { weekStart: true } } },
     }),
   ]);
@@ -219,11 +232,11 @@ export async function GET(req: NextRequest) {
   }
   const matActualMap = new Map<string, number>();
   for (const e of matActuals) {
-    const d = new Date(e.timesheet.weekStart);
-    const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1;
-    if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
-    const k = `${e.projectId}|${y}|${m}`;
-    matActualMap.set(k, (matActualMap.get(k) || 0) + e.totalHrs);
+    for (const [y, m, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
+      if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
+      const k = `${e.projectId}|${y}|${m}`;
+      matActualMap.set(k, (matActualMap.get(k) || 0) + hrs);
+    }
   }
 
   const planActualMatrix = matProjIds.map((pid) => {
@@ -266,13 +279,13 @@ export async function GET(req: NextRequest) {
       }),
       prisma.timesheet.findMany({
         where: {
-          weekStart: { gte: new Date(matStart.getTime() - MS_13H), lte: new Date(matEnd.getTime() + MS_13H) },
+          weekStart: weekStartFilterForRange(matStart, new Date(matEnd.getTime() + 86400000)),
           employee: { department: deptFilter, isActive: true },
           status: { in: ["submitted", "approved"] },
         },
         include: {
           employee: { select: { id: true, employeeId: true, name: true, position: true } },
-          entries: { select: { totalHrs: true } },
+          entries: true,
         },
       }),
     ]);
@@ -289,12 +302,16 @@ export async function GET(req: NextRequest) {
     // Aggregate actuals: empId|month -> actualHrs
     const empActMap = new Map<string, number>();
     for (const ts of empTimesheets) {
-      const d = new Date(ts.weekStart);
-      const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1;
-      if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
-      const hrs = ts.entries.reduce((s: number, e: any) => s + e.totalHrs, 0);
-      const k = `${ts.employee.id}|${y}|${m}`;
-      empActMap.set(k, (empActMap.get(k) ?? 0) + hrs);
+      let inMatrix = false;
+      for (const e of ts.entries) {
+        for (const [y, m, hrs] of entryMonthHours(ts.weekStart, e)) {
+          if (!matMonths.find((mm) => mm.year === y && mm.month === m)) continue;
+          const k = `${ts.employee.id}|${y}|${m}`;
+          empActMap.set(k, (empActMap.get(k) ?? 0) + hrs);
+          inMatrix = true;
+        }
+      }
+      if (!inMatrix) continue;
       // seed พนักงานที่มี Actual แต่ไม่มี Plan เข้า matrix ด้วย
       if (!empMeta.has(ts.employee.id)) empMeta.set(ts.employee.id, ts.employee);
     }
@@ -346,11 +363,12 @@ export async function GET(req: NextRequest) {
     const leaveByEmp = new Map<string, { name: string; employeeId: string; department: string; hours: number }>();
     for (const ts of leaveTS) {
       for (const e of ts.entries) {
-        if (e.totalHrs <= 0) continue;
+        const hrs = hrsInPeriod(ts.weekStart, e);
+        if (hrs <= 0) continue;
         const emp = ts.employee;
         const x   = leaveByEmp.get(emp.id);
-        if (x) x.hours += e.totalHrs;
-        else leaveByEmp.set(emp.id, { name: emp.name, employeeId: emp.employeeId, department: emp.department, hours: e.totalHrs });
+        if (x) x.hours += hrs;
+        else leaveByEmp.set(emp.id, { name: emp.name, employeeId: emp.employeeId, department: emp.department, hours: hrs });
       }
     }
     leaveBreakdown = Array.from(leaveByEmp.values()).sort((a, b) => b.hours - a.hours);

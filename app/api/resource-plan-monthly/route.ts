@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { entryMonthHours } from "@/lib/capacity";
 
 const PROJECT_INCLUDE = {
   manager: { select: { id: true, name: true, employeeId: true } },
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
 
   // Fetch actual hours per department per month from timesheets for this project
   const actualEntries = await prisma.timesheetEntry.findMany({
-    where: { projectId },
+    where: { projectId, timesheet: { status: { in: ["submitted", "approved"] } } },
     include: {
       timesheet: {
         include: { employee: { select: { department: true } } },
@@ -78,12 +79,12 @@ export async function GET(req: NextRequest) {
   // Aggregate actuals by (department, year, month)
   const actualMap = new Map<string, number>();
   for (const e of actualEntries) {
-    const d = new Date(e.timesheet.weekStart);
-    const year  = d.getUTCFullYear();
-    const month = d.getUTCMonth() + 1;
-    const dept  = e.timesheet.employee.department;
-    const key   = `${dept}|${year}|${month}`;
-    actualMap.set(key, (actualMap.get(key) || 0) + e.totalHrs);
+    const dept = e.timesheet.employee.department;
+    // แบ่งเข้าเดือนตามวันที่จริง (สัปดาห์คร่อมเดือนแบ่งถูกต้อง)
+    for (const [year, month, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
+      const key = `${dept}|${year}|${month}`;
+      actualMap.set(key, (actualMap.get(key) || 0) + hrs);
+    }
   }
 
   const actuals = Array.from(actualMap.entries()).map(([key, hrs]) => {

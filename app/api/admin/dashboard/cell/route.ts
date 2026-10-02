@@ -3,11 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { isPD, isGesMgmt } from "@/lib/roles";
+import { entryHoursInRange, weekStartFilterForRange } from "@/lib/capacity";
 
 // Drill-down endpoint สำหรับ Plan vs Actual Matrix
 //   projectId + year + month  → รายชื่อพนักงานที่ลงเวลาใน project/เดือนนั้น
 //   empId     + year + month  → รายชื่อ project ที่พนักงานคนนั้นลงเวลาในเดือนนั้น
-// การ bucket เดือนใช้ raw weekStart (UTC month) ให้ตรงกับ matrix เป๊ะ เพื่อให้ยอดตรงกับเซลล์
+// ชั่วโมงแบ่งเข้าเดือนตามวันที่จริง + นับเฉพาะ submitted/approved ให้ตรงกับ matrix เป๊ะ เพื่อให้ยอดตรงกับเซลล์
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -25,9 +26,10 @@ export async function GET(req: NextRequest) {
   if (!year || !month || (!projectId && !empId))
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
 
-  // ช่วงเดือน (match matrix bucketing: weekStart ที่ UTC month = เดือนนี้)
+  // ช่วงเดือน: ดึงทุกสัปดาห์ที่มีวันตกในเดือน แล้วนับเฉพาะชั่วโมงของวันในเดือน
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end   = new Date(Date.UTC(year, month, 1));
+  const weekFilter = weekStartFilterForRange(start, end);
 
   // ── Project drill-down: ใครลงเวลาใน project นี้เท่าไหร่ ──
   if (projectId) {
@@ -40,18 +42,17 @@ export async function GET(req: NextRequest) {
       if (!ok) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // NOTE: matรวม actual ของ project matrix นับ entry ทั้งหมด (ไม่กรอง status/isActive)
-    // จึงต้องนับแบบเดียวกัน เพื่อให้ยอดรวมใน popup ตรงกับตัวเลขในเซลล์เป๊ะ
     const entries = await prisma.timesheetEntry.findMany({
       where: {
         projectId,
         totalHrs: { gt: 0 },
-        timesheet: { weekStart: { gte: start, lt: end } },
+        timesheet: { status: { in: ["submitted", "approved"] }, weekStart: weekFilter },
       },
       include: {
         taskCode: { select: { category: true } },
         timesheet: {
           select: {
+            weekStart: true,
             employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
           },
         },
@@ -62,12 +63,14 @@ export async function GET(req: NextRequest) {
       empId: string; employeeId: string; name: string; department: string; position: string; hours: number;
     }>();
     for (const e of entries) {
+      const hrs = entryHoursInRange(e.timesheet.weekStart, e, start, end);
+      if (hrs <= 0) continue;
       const emp = e.timesheet.employee;
       const x = byEmp.get(emp.id);
-      if (x) x.hours += e.totalHrs;
+      if (x) x.hours += hrs;
       else byEmp.set(emp.id, {
         empId: emp.id, employeeId: emp.employeeId, name: emp.name,
-        department: emp.department, position: emp.position, hours: e.totalHrs,
+        department: emp.department, position: emp.position, hours: hrs,
       });
     }
 
@@ -105,10 +108,11 @@ export async function GET(req: NextRequest) {
       timesheet: {
         employeeId: empId,
         status: { in: ["submitted", "approved"] },
-        weekStart: { gte: start, lt: end },
+        weekStart: weekFilter,
       },
     },
     include: {
+      timesheet: { select: { weekStart: true } },
       project:  { select: { id: true, projectNumber: true, projectName: true } },
       taskCode: { select: { category: true } },
     },
@@ -118,13 +122,15 @@ export async function GET(req: NextRequest) {
     projectId: string; projectNumber: string; projectName: string; hours: number;
   }>();
   for (const e of entries) {
+    const hrs = entryHoursInRange(e.timesheet.weekStart, e, start, end);
+    if (hrs <= 0) continue;
     const x = byProj.get(e.projectId);
-    if (x) x.hours += e.totalHrs;
+    if (x) x.hours += hrs;
     else byProj.set(e.projectId, {
       projectId: e.projectId,
       projectNumber: e.project?.projectNumber ?? "?",
       projectName:   e.project?.projectName ?? "?",
-      hours: e.totalHrs,
+      hours: hrs,
     });
   }
 
