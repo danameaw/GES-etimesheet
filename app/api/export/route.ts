@@ -5,7 +5,9 @@ import { isEmployedInWeek } from "@/lib/employment-period";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import {
   holidayWeekdaySet, weekCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours, availableHrs, pctOf,
+  entryMonthHours, weekStartFilterForRange,
 } from "@/lib/capacity";
+import { isGesMgmt } from "@/lib/roles";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -64,6 +66,7 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
       where: { weekStart: tsWeekFilter },
       include: {
         employee: true,
+        // โหลดทุกสถานะเพื่อแสดงสถานะ/Weeks Logged — ชั่วโมงนับเฉพาะที่ส่งแล้ว (ดูด้านล่าง)
         entries: { where: projEntryFilter, include: { project: { select: { projectNumber: true, projectType: true } }, taskCode: { select: { code: true } } } },
       },
     }),
@@ -81,9 +84,12 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     const a = aggMap.get(t.employeeId) ?? { hrs: 0, b: emptyBreakdown(), done: 0, logged: 0, lastStatus: t.status };
     const weekHrs = t.entries.reduce((s, e) => s + e.totalHrs, 0);
     a.hrs += weekHrs;
-    for (const e of t.entries) {
-      const kind = classifyEntry(e);
-      for (const [day, hrs] of entryDays(t.weekStart, e)) addHours(a.b, kind, day, hrs, holidays);
+    // ชั่วโมงสำหรับ Utilization นับเฉพาะ timesheet ที่ส่งแล้ว (submitted/approved) เหมือนรายงานอื่น
+    if (DONE_STATUSES.includes(t.status)) {
+      for (const e of t.entries) {
+        const kind = classifyEntry(e);
+        for (const [day, hrs] of entryDays(t.weekStart, e)) addHours(a.b, kind, day, hrs, holidays);
+      }
     }
     if (weekHrs > 0) a.logged += 1; // any hours entered that week, regardless of status (draft counts)
     if (DONE_STATUSES.includes(t.status)) a.done += 1;
@@ -284,8 +290,16 @@ export async function GET(req: NextRequest) {
     writeMissingSheet(wb, "Missing Timesheet Report", subtitle, util.missing);
 
   } else if (type === "plan-actual") {
-    // Admin only
-    if (role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
+    // Admin: ทุกแผนก · GES Management: เฉพาะแผนกที่ดูแล (managedDept หรือแผนกตัวเอง)
+    if (role !== "admin" && !isGesMgmt(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    let scopeDept: string | null = null;
+    if (role !== "admin") {
+      const me = await prisma.employee.findUnique({
+        where: { id: (session.user as any).id }, select: { managedDept: true, department: true },
+      });
+      scopeDept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
+      if (!scopeDept) return NextResponse.json({ error: "No department assigned" }, { status: 403 });
+    }
 
     const yearParam = searchParams.get("year");
     const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
@@ -301,7 +315,7 @@ export async function GET(req: NextRequest) {
 
     const [plans, rawEntries] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
-        where: { year, ...projWhere },
+        where: { year, ...projWhere, ...(scopeDept ? { employee: { department: scopeDept } } : {}) },
         include: {
           employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
           project:  { select: { id: true, projectNumber: true, projectName: true } },
@@ -309,9 +323,11 @@ export async function GET(req: NextRequest) {
       }),
       prisma.timesheetEntry.findMany({
         where: {
+          // ทุกสัปดาห์ที่มีวันตกในปีนี้ — ชั่วโมงแบ่งเข้าเดือนตามวันที่จริง
           timesheet: {
-            weekStart: { gte: new Date(yearStart.getTime() - MS_13H), lt: new Date(yearEnd.getTime() + MS_13H) },
+            weekStart: weekStartFilterForRange(yearStart, yearEnd),
             status: { in: DONE_STATUSES },
+            ...(scopeDept ? { employee: { department: scopeDept } } : {}),
           },
           taskCode: { code: { notIn: LEAVE_CODES } },
           ...(projIdFilter ? { projectId: { in: projIdFilter } } : {}),
@@ -348,13 +364,13 @@ export async function GET(req: NextRequest) {
 
     for (const e of rawEntries) {
       if (e.totalHrs === 0) continue;
-      const d = new Date(e.timesheet.weekStart);
-      const m = d.getUTCMonth() + 1;
-      if (d.getUTCFullYear() !== year) continue;
       const emp0 = e.timesheet.employee;
-      const proj = getProj(e.project.id, e.project.projectNumber, e.project.projectName);
-      const emp  = getEmp(proj, emp0.id, emp0.employeeId, emp0.name, emp0.department, emp0.position ?? "");
-      emp.months[m - 1].actual += e.totalHrs;
+      for (const [y, m, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
+        if (y !== year) continue;
+        const proj = getProj(e.project.id, e.project.projectNumber, e.project.projectName);
+        const emp  = getEmp(proj, emp0.id, emp0.employeeId, emp0.name, emp0.department, emp0.position ?? "");
+        emp.months[m - 1].actual += hrs;
+      }
     }
 
     const colCount = 4 + months.length * 2 + 3;
@@ -364,7 +380,7 @@ export async function GET(req: NextRequest) {
       ...Array(months.length * 2).fill({ width: 10 }),
       { width: 14 }, { width: 14 }, { width: 10 },
     ];
-    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${year}`, `หน่วย: Man-Month (176 ชม.)   •   Generated: ${generatedAt}   •   Admin only`, colCount);
+    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${year}`, `หน่วย: Man-Month (176 ชม.)   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, colCount);
 
     const headerMonth: (string)[] = ["โครงการ / พนักงาน", "รหัสพนักงาน", "ตำแหน่ง", "แผนก"];
     const headerSub: string[] = ["", "", "", ""];
@@ -460,9 +476,10 @@ export async function GET(req: NextRequest) {
     }
     for (const e of rawEntries) {
       if (e.totalHrs === 0) continue;
-      const d = new Date(e.timesheet.weekStart);
-      if (d.getUTCFullYear() !== year) continue;
-      getDeptRow(e.project.id, e.project.projectNumber, e.project.projectName, e.timesheet.employee.department || "(ไม่ระบุแผนก)")[d.getUTCMonth()].actual += e.totalHrs;
+      for (const [y, m, hrs] of entryMonthHours(e.timesheet.weekStart, e)) {
+        if (y !== year) continue;
+        getDeptRow(e.project.id, e.project.projectNumber, e.project.projectName, e.timesheet.employee.department || "(ไม่ระบุแผนก)")[m - 1].actual += hrs;
+      }
     }
 
     const dsColCount = 1 + months.length * 2 + 3;
@@ -552,7 +569,7 @@ export async function GET(req: NextRequest) {
   }
 
   const filename = type === "plan-actual"
-    ? `GES_PlanActual_${searchParams.get("year") || new Date().getFullYear()}_${format(new Date(), "yyyyMMdd")}.xlsx`
+    ? `GES_PlanActual_${searchParams.get("year") || new Date().getFullYear()}${role !== "admin" ? "_dept" : ""}_${format(new Date(), "yyyyMMdd")}.xlsx`
     : `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
   const buf = await wb.xlsx.writeBuffer();
