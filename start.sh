@@ -1,6 +1,7 @@
 #!/bin/sh
 echo "==> Running migrations..."
-npx prisma migrate deploy || true
+# migration ล้มเหลว = หยุด deploy (ไม่ปล่อยให้แอปขึ้นโดย schema ไม่ตรง)
+npx prisma migrate deploy || exit 1
 
 echo "==> Running seed (if empty)..."
 node scripts/seed-prod.js || true
