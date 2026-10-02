@@ -14,6 +14,7 @@ interface Employee {
   role: string;
   managedDept: string;
   isActive: boolean;
+  startDate: string | null;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
 }
 
@@ -42,7 +43,7 @@ const DEPARTMENTS = [
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "" };
 
 export default function EmployeesPage() {
   const { data: session } = useSession();
@@ -98,6 +99,7 @@ export default function EmployeesPage() {
       role: emp.role,
       managedDept: emp.managedDept || "",
       isActive: emp.isActive,
+      startDate: emp.startDate?.slice(0, 10) || "",
     });
     setFormError("");
     setEditingId(emp.id);
@@ -388,6 +390,7 @@ export default function EmployeesPage() {
                     {emp.isActive
                       ? <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Active</span>
                       : <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Inactive</span>}
+                    {emp.startDate && <div className="text-[11px] text-gray-400 mt-0.5">เริ่ม {fmtDate(emp.startDate)}</div>}
                   </td>
                   <td className="text-center">
                     <div className="flex items-center justify-center gap-2">
@@ -479,6 +482,20 @@ export default function EmployeesPage() {
                   placeholder="เช่น Engineer I, Senior Engineer II"
                   className="ges-input"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  วันเริ่มงาน <span className="text-gray-400 font-normal">(ไม่บังคับ — พนักงานเดิมเว้นว่างได้)</span>
+                </label>
+                <input
+                  type="date"
+                  value={form.startDate}
+                  onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                  className="ges-input"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  สัปดาห์ก่อนวันเริ่มงานจะไม่นับเป็น &quot;ยังไม่ส่ง&quot; และไม่นำไปคิด Utilization
+                </p>
               </div>
               {(form.role === "ges_management" || form.role === "ges_pd") && (
                 <div>
@@ -642,4 +659,10 @@ export default function EmployeesPage() {
       )}
     </div>
   );
+}
+
+// "2026-09-15T00:00:00.000Z" → "15/09/2026" (date-only field; read the UTC date to avoid a timezone shift)
+function fmtDate(iso: string) {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
 }

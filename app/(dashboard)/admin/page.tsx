@@ -8,6 +8,7 @@ import { format, startOfWeek, addWeeks, subWeeks, addDays, addMonths, subMonths,
 interface EmployeeRow {
   id: string; employeeId: string; name: string; department: string; position: string;
   timesheetId: string | null; status: string; submittedAt: string | null; totalHrs: number;
+  counted?: boolean; countStatus?: string;
 }
 interface ProjectRow {
   projectId: string; projectNumber: string; projectName: string;
@@ -83,6 +84,34 @@ export default function AdminPage() {
     return weeks;
   }
 
+  // Month summary: one status per employee across the month's weeks (future weeks ignored).
+  // Worst status wins, so "อนุมัติแล้ว" = every week approved, "ยังไม่ส่ง" = missed at least one week.
+  function rollupMonthSummary(weeks: { week: Date; employees: EmployeeRow[]; summary: Summary | null }[]): Summary | null {
+    const today = new Date();
+    const past = weeks.filter((w) => w.week <= today);
+    if (past.length === 0) return null;
+    const rank = ["missing", "draft", "rejected", "submitted", "approved"];
+    const worst = new Map<string, string>();
+    for (const w of past) {
+      for (const e of w.employees) {
+        if (!e.counted) continue;
+        const st = rank.includes(e.countStatus ?? "") ? e.countStatus! : "missing";
+        const prev = worst.get(e.id);
+        if (prev === undefined || rank.indexOf(st) < rank.indexOf(prev)) worst.set(e.id, st);
+      }
+    }
+    const count = (st: string) => Array.from(worst.values()).filter((v) => v === st).length;
+    const maxWeekTotal = Math.max(0, ...past.map((w) => w.summary?.total ?? 0));
+    return {
+      total: Math.max(maxWeekTotal, worst.size),
+      submitted: count("submitted"), approved: count("approved"), draft: count("draft"),
+      missing: count("missing"), rejected: count("rejected"),
+      weekStart: format(past[0].week, "yyyy-MM-dd"),
+      weekEnd: format(addDays(past[past.length - 1].week, 6), "yyyy-MM-dd"),
+      weekCapacity: 40,
+    };
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     setSelectedIds(new Set());
@@ -131,6 +160,7 @@ export default function AdminPage() {
         })
       );
       setMonthWeeks(results);
+      setSummary(rollupMonthSummary(results));
       // auto-expand all weeks
       setExpandedWeeks(new Set(results.map((r) => format(r.week, "yyyy-MM-dd"))));
     }
@@ -316,7 +346,10 @@ export default function AdminPage() {
         return (
           <div className="ges-card p-4 mb-6">
             <div className="flex justify-between text-sm mb-2">
-              <span className="font-medium text-gray-700">{isPD ? "อนุมัติแล้ว" : "Submission Progress"}</span>
+              <span className="font-medium text-gray-700">
+                {isPD ? "อนุมัติแล้ว" : "Submission Progress"}
+                {navMode === "month" && <span className="ml-2 text-xs font-normal text-gray-400">นับรายคน · ต้องส่งครบทุกสัปดาห์ในเดือน</span>}
+              </span>
               <span className="text-gray-500">
                 {isPD && "อนุมัติ "}{done}/{summary.total} ({Math.round(pct(done))}%)
                 {!isPD && summary.submitted > 0 && (
@@ -996,6 +1029,7 @@ function StatusBadge({ status }: { status: string }) {
     rejected:         { label: "✗ ไม่อนุมัติ",     cls: "bg-red-100 text-red-800" },
     draft:            { label: "Draft",             cls: "bg-gray-100 text-gray-600" },
     missing:          { label: "ยังไม่ส่ง",        cls: "bg-red-50 text-red-500" },
+    "not-employed":   { label: "ยังไม่เริ่มงาน",   cls: "bg-gray-50 text-gray-400" },
   };
   const s = map[status] ?? map.missing;
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;

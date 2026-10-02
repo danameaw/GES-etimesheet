@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
+import { isEmployedInWeek } from "@/lib/employment-period";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
@@ -85,8 +87,11 @@ export async function GET(req: NextRequest) {
       name:        emp.name,
       department:  emp.department,
       position:    emp.position,
+      startDate:   emp.startDate,
       timesheetId: ts?.id || null,
-      status:      (ts?.status === "submitted" && totalHrs === 0) ? "draft" : ts?.status || "missing",
+      // no timesheet in a week before startDate isn't missing — they hadn't joined yet
+      status:      (ts?.status === "submitted" && totalHrs === 0) ? "draft"
+                 : ts?.status || (isEmployedInWeek(emp, weekStart) ? "missing" : "not-employed"),
       submittedAt: ts?.submittedAt || null,
       totalHrs,
     };
@@ -103,9 +108,13 @@ export async function GET(req: NextRequest) {
       )
     : null;
 
-  const countRows = scopedEmpIds
-    ? employeeRows.filter((e) => scopedEmpIds.has(e.id))
-    : employeeRows;
+  // Exempt staff and weeks before an employee's startDate are never counted;
+  // PD/MD only count employees in their scope
+  const isRequired = (e: { employeeId: string; startDate: Date | null }) =>
+    !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && isEmployedInWeek(e, weekStart);
+  const isCounted = (e: { id: string; employeeId: string; startDate: Date | null }) =>
+    isRequired(e) && (!scopedEmpIds || scopedEmpIds.has(e.id));
+  const countRows = employeeRows.filter(isCounted);
 
   // สร้าง reverse map: timesheetId → timesheet (สำหรับ PD per-project approval check)
   const timesheetByIdMap = new Map(timesheets.map((t) => [t.id, t]));
@@ -192,16 +201,17 @@ export async function GET(req: NextRequest) {
   }
 
   // Summary: count only employees in scoped projects
+  const requiredEmployees = allEmployees.filter(isRequired);
   const summaryEmployees = scopedProjectIds
-    ? allEmployees.filter((e) => {
+    ? requiredEmployees.filter((e) => {
         const ts = timesheetMap.get(e.id);
         return ts?.entries.some((en) => scopedProjectIds!.has(en.project.id));
       })
-    : allEmployees;
+    : requiredEmployees;
 
   return NextResponse.json({
     summary: {
-      total:        pdProjectIds ? summaryEmployees.length : allEmployees.length,
+      total:        pdProjectIds ? summaryEmployees.length : requiredEmployees.length,
       submitted,
       approved,
       draft,
@@ -211,7 +221,12 @@ export async function GET(req: NextRequest) {
       weekEnd,
       weekCapacity: 40,
     },
-    employees: employeeRows,
+    // counted/countStatus let the month view roll weeks up with the same rules as this summary
+    employees: employeeRows.map((e) => ({
+      ...e,
+      counted:     isCounted(e),
+      countStatus: isFullyProjectApproved(e) ? "approved" : e.status,
+    })),
     projectRows,
   });
 }

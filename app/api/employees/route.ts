@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { parseDateOnly } from "@/lib/employment-period";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role, isActive, managedDept } = body;
+  const { employeeId, name, department, position, role, isActive, managedDept, startDate } = body;
 
   if (!employeeId || !name || !department || !position) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       role: role || "employee",
       isActive: isActive !== false,
       ...(managedDept && { managedDept: managedDept.trim() }),
+      startDate: parseDateOnly(startDate),
     },
   });
 

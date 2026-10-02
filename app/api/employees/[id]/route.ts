@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { parseDateOnly } from "@/lib/employment-period";
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
@@ -13,7 +14,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept } = body;
+  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept, startDate } = body;
 
   // PD can ONLY change level
   if (role === "ges_management") {
@@ -43,6 +44,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ...(isActive !== undefined && { isActive }),
       ...(level !== undefined && { level: String(level) }),
       ...(managedDept !== undefined && { managedDept: managedDept.trim() }),
+      ...(startDate !== undefined && { startDate: parseDateOnly(startDate) }),
     },
   });
 

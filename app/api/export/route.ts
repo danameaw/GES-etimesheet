@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
+import { isEmployedInWeek } from "@/lib/employment-period";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -43,22 +45,14 @@ const MS_13H = 13 * 60 * 60 * 1000;
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const DONE_STATUSES = ["submitted", "approved"];
 
-// Senior staff who are not required to log timesheets - excluded from all
-// utilization/compliance counting (Utilization, Missing, and Executive
-// reports: totals, avg utilization, submission compliance %). They still
-// appear normally on the Employees admin page; this only affects reporting.
-const TIMESHEET_EXEMPT_IDS = new Set([
-  "2962", "1215", "0584", "2623", "3486", "0260",
-  "3033", "0248", "GES001", "0327", "GES003", "0353",
-]);
-
 // ±13h tolerance window for backward-compat with Thailand UTC+7 stored dates
 function weekRange(weekStart: Date) {
   return { gte: new Date(weekStart.getTime() - MS_13H), lt: new Date(weekStart.getTime() + MS_13H) };
 }
 
 // Per-employee utilization for the period, plus the aggregate stats the Dashboard needs.
-async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeksCount: number, isMonth: boolean) {
+// Capacity and required weeks are per employee: only weeks from their startDate count.
+async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeks: Date[], isMonth: boolean) {
   const [allEmployeesRaw, timesheets] = await Promise.all([
     prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
@@ -66,7 +60,8 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
       include: { employee: true, entries: { where: projEntryFilter } },
     }),
   ]);
-  const allEmployees = allEmployeesRaw.filter((e) => !TIMESHEET_EXEMPT_IDS.has(e.employeeId));
+  const requiredWeeks = new Map(allEmployeesRaw.map((e) => [e.id, weeks.filter((w) => isEmployedInWeek(e, w)).length]));
+  const allEmployees = allEmployeesRaw.filter((e) => !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && requiredWeeks.get(e.id)! > 0);
 
   const aggMap = new Map<string, { hrs: number; done: number; logged: number; lastStatus: string }>();
   for (const t of timesheets) {
@@ -79,7 +74,6 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     aggMap.set(t.employeeId, a);
   }
 
-  const capacity = 40 * weeksCount;
   const submittedIds = new Set(timesheets.filter((t) => DONE_STATUSES.includes(t.status)).map((t) => t.employeeId));
 
   const rows: UtilizationRow[] = [];
@@ -88,8 +82,9 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
   for (const emp of allEmployees) {
     const a = aggMap.get(emp.id);
     const totalHrs = a?.hrs || 0;
-    const utilization = Math.round((totalHrs / capacity) * 100);
-    const status = !a ? "missing" : isMonth ? `${a.done}/${weeksCount} weeks` : a.lastStatus;
+    const empWeeks = requiredWeeks.get(emp.id)!;
+    const utilization = Math.round((totalHrs / (40 * empWeeks)) * 100);
+    const status = !a ? "missing" : isMonth ? `${a.done}/${empWeeks} weeks` : a.lastStatus;
     rows.push({
       employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position,
       hours: totalHrs, utilization, status,
@@ -132,19 +127,19 @@ export async function GET(req: NextRequest) {
   let tsWeekFilter: { gte: Date; lt: Date };
   let periodLabel: string;
   let periodKey: string;
-  let weeksCount = 1; // for utilization capacity (weeks × 40h)
+  let weeks: Date[]; // Mon-starting weeks in the period — utilization capacity = employed weeks × 40h
 
   if (isRange) {
     const first = mondayOfUTC(new Date(fromParam + "T00:00:00.000Z"));
     const last = mondayOfUTC(new Date(toParam + "T00:00:00.000Z"));
-    weeksCount = Math.max(1, Math.round((last.getTime() - first.getTime()) / (7 * 86400000)) + 1);
+    weeks = [];
+    for (let w = first; w <= last; w = new Date(w.getTime() + 7 * 86400000)) weeks.push(w);
     tsWeekFilter = { gte: new Date(first.getTime() - MS_13H), lt: new Date(last.getTime() + MS_13H) };
     periodLabel = `${format(first, "dd-MMM-yyyy")} to ${format(new Date(last.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
     periodKey = `${format(first, "yyyyMMdd")}-${format(last, "yyyyMMdd")}`;
   } else if (isMonth) {
     const monthStart = new Date(monthParam + "T00:00:00.000Z");
-    const weeks = weeksInMonthUTC(monthStart);
-    weeksCount = weeks.length;
+    weeks = weeksInMonthUTC(monthStart);
     const first = weeks[0];
     const last = weeks[weeks.length - 1];
     tsWeekFilter = { gte: new Date(first.getTime() - MS_13H), lt: new Date(last.getTime() + MS_13H) };
@@ -154,6 +149,7 @@ export async function GET(req: NextRequest) {
     const weekStart = weekParam
       ? new Date(weekParam + "T00:00:00.000Z")
       : startOfWeek(new Date(), { weekStartsOn: 1 });
+    weeks = [weekStart];
     tsWeekFilter = weekRange(weekStart);
     periodLabel = `${format(weekStart, "dd-MMM")} to ${format(new Date(weekStart.getTime() + 6 * 86400000), "dd-MMM-yyyy")}`;
     periodKey = format(weekStart, "yyyy-MM-dd");
@@ -227,17 +223,17 @@ export async function GET(req: NextRequest) {
     writeProjectTaskSheet(wb, "By Task", "GES E-Timesheet — Hours by Project & Task", subtitle, tree);
 
   } else if (type === "utilization") {
-    const { rows } = await computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth);
+    const { rows } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth);
     writeUtilizationSheet(wb, "GES E-Timesheet — Utilization Report", subtitle, rows);
 
   } else if (type === "missing") {
-    const { missing } = await computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth);
+    const { missing } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth);
     writeMissingSheet(wb, "GES E-Timesheet — Missing Timesheet Report", subtitle, missing);
 
   } else if (type === "executive") {
     const [entries, util] = await Promise.all([
       fetchEntries(),
-      computeUtilization(tsWeekFilter, projEntryFilter, weeksCount, isMonth),
+      computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth),
     ]);
 
     const projTree = buildProjectTree(entries);
