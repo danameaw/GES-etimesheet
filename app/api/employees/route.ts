@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role, isActive, managedDept, startDate, orgUnitId } = body;
+  const { employeeId, name, department, position, role, isActive, managedDept, startDate, endDate, orgUnitId } = body;
 
   if (!employeeId || !name || !department || !position) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
       isActive: isActive !== false,
       ...(managedDept && { managedDept: managedDept.trim() }),
       startDate: parseDateOnly(startDate),
+      endDate: parseDateOnly(endDate),
       orgUnitId: orgUnitId || null,
     },
   });

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
-import { isEmployedInWeek } from "@/lib/employment-period";
+import { isEmployedInWeek, employedFrom } from "@/lib/employment-period";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   }
 
   const [allEmployees, timesheets] = await Promise.all([
-    prisma.employee.findMany({ where: { isActive: true }, orderBy: { employeeId: "asc" } }),
+    prisma.employee.findMany({ where: employedFrom(weekStart), orderBy: { employeeId: "asc" } }),
     prisma.timesheet.findMany({
       where: { weekStart: { gte: weekStartMin, lt: weekStartMax } },
       include: {

@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { isPD, isGesMgmt } from "@/lib/roles";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
+import { employedFrom } from "@/lib/employment-period";
 import {
   holidayWeekdaySet, monthCompanyCapacity, weekCompanyCapacity, classifyEntry, entryDays,
   emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, HRS_PER_DAY, UTILIZATION_TARGET,
@@ -94,9 +95,12 @@ export async function GET(req: NextRequest) {
   }
   const hrsInPeriod = (weekStart: Date, e: any): number =>
     monthRange ? entryHoursInRange(weekStart, e, monthRange.start, monthRange.end) : e.totalHrs;
+  // staff counted in this period: active, or left (endDate) on/after the period start
+  const periodFrom = monthRange?.start ?? (weekParam ? new Date(weekParam + "T00:00:00.000Z") : null);
+  const staffFilter = periodFrom ? employedFrom(periodFrom) : { isActive: true };
 
   // ── Timesheets ── (นับเฉพาะ employee ที่ยัง active เท่านั้น)
-  const tsWhere: any = { status: { in: ["submitted", "approved"] }, employee: { isActive: true } };
+  const tsWhere: any = { status: { in: ["submitted", "approved"] }, employee: { ...staffFilter } };
   if (Object.keys(dateFilter).length) tsWhere.weekStart = dateFilter;
   if (projectId) tsWhere.entries = { some: { projectId } };
   else if (pdProjectIds) tsWhere.entries = { some: { projectId: { in: pdProjectIds } } };
@@ -142,7 +146,7 @@ export async function GET(req: NextRequest) {
   }
   // GES Management: filter plan เฉพาะพนักงานใน dept นั้น
   if (deptFilter) {
-    Object.assign(planWhere, { employee: { department: deptFilter, isActive: true } });
+    Object.assign(planWhere, { employee: { department: deptFilter, ...staffFilter } });
   }
   const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
     where: planWhere,
@@ -272,7 +276,7 @@ export async function GET(req: NextRequest) {
     const [empPlans, empTimesheets] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
         where: {
-          employee: { department: deptFilter, isActive: true },
+          employee: { department: deptFilter, ...employedFrom(matStart) },
           OR: matMonths.map((m) => ({ year: m.year, month: m.month })),
         },
         include: { employee: { select: { id: true, employeeId: true, name: true, position: true } } },
@@ -280,7 +284,7 @@ export async function GET(req: NextRequest) {
       prisma.timesheet.findMany({
         where: {
           weekStart: weekStartFilterForRange(matStart, new Date(matEnd.getTime() + 86400000)),
-          employee: { department: deptFilter, isActive: true },
+          employee: { department: deptFilter, ...employedFrom(matStart) },
           status: { in: ["submitted", "approved"] },
         },
         include: {
@@ -334,7 +338,7 @@ export async function GET(req: NextRequest) {
   // เพื่อให้เห็น leave ของพนักงานที่ลาทั้งสัปดาห์ (ไม่มี project entry)
   const leaveTsWhere: any = {
     status: { in: ["submitted", "approved"] },
-    employee: { isActive: true },
+    employee: { ...staffFilter },
   };
   if (Object.keys(dateFilter).length) leaveTsWhere.weekStart = dateFilter;
   if (deptFilter) leaveTsWhere.employee = { ...leaveTsWhere.employee, department: deptFilter };
@@ -395,15 +399,15 @@ export async function GET(req: NextRequest) {
     }
     const [capEmployees, capHolidays, capTS] = await Promise.all([
       prisma.employee.findMany({
-        where: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
-        select: { id: true, employeeId: true, startDate: true },
+        where: { ...employedFrom(periodStart), ...(deptFilter ? { department: deptFilter } : {}) },
+        select: { id: true, employeeId: true, startDate: true, endDate: true },
       }),
       prisma.holiday.findMany({ where: { date: { gte: periodStart, lt: periodEnd } }, select: { date: true } }),
       prisma.timesheet.findMany({
         where: {
           weekStart: { gte: new Date(periodStart.getTime() - 7 * DAY - MS_13H), lt: new Date(periodEnd.getTime() + MS_13H) },
           status: { in: ["submitted", "approved"] },
-          employee: { isActive: true, ...(deptFilter ? { department: deptFilter } : {}) },
+          employee: { ...employedFrom(periodStart), ...(deptFilter ? { department: deptFilter } : {}) },
         },
         include: { entries: { include: { project: { select: { projectNumber: true, projectType: true } }, taskCode: { select: { code: true } } } } },
       }),
@@ -440,6 +444,16 @@ export async function GET(req: NextRequest) {
         for (let t = periodStart.getTime(); toDateKey(new Date(t)) < sd; t += DAY) {
           const k = toDateKey(new Date(t)); const dow = new Date(t).getUTCDay();
           if (dow >= 1 && dow <= 5 && !holidays.has(k)) cap -= HRS_PER_DAY;
+        }
+        cap = Math.max(0, cap);
+      }
+      // ลาออก: หักวันทำงานหลังวันสุดท้ายที่ทำงาน
+      if (emp.endDate) {
+        const ed = toDateKey(normalizeDay(emp.endDate));
+        if (ed < startKey) continue;
+        for (let t = periodStart.getTime(); toDateKey(new Date(t)) < endKey; t += DAY) {
+          const k = toDateKey(new Date(t)); const dow = new Date(t).getUTCDay();
+          if (k > ed && dow >= 1 && dow <= 5 && !holidays.has(k)) cap -= HRS_PER_DAY;
         }
         cap = Math.max(0, cap);
       }

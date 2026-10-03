@@ -15,6 +15,7 @@ interface Employee {
   managedDept: string;
   isActive: boolean;
   startDate: string | null;
+  endDate: string | null;
   orgUnitId: string | null;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
 }
@@ -60,7 +61,7 @@ const DEPARTMENTS = [
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", orgUnitId: "" };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", endDate: "", orgUnitId: "" };
 
 interface UnitOption { id: string; department: string; path: string; depth: number; }
 
@@ -121,6 +122,7 @@ export default function EmployeesPage() {
       managedDept: emp.managedDept || "",
       isActive: emp.isActive,
       startDate: emp.startDate?.slice(0, 10) || "",
+      endDate: emp.endDate?.slice(0, 10) || "",
       orgUnitId: emp.orgUnitId || "",
     });
     setFormError("");
@@ -433,6 +435,7 @@ export default function EmployeesPage() {
                       ? <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Active</span>
                       : <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Inactive</span>}
                     {emp.startDate && <div className="text-[11px] text-gray-400 mt-0.5">เริ่ม {fmtDate(emp.startDate)}</div>}
+                    {emp.endDate && <div className="text-[11px] text-red-400 mt-0.5">ออก {fmtDate(emp.endDate)}</div>}
                   </td>
                   <td className="text-center">
                     <div className="flex items-center justify-center gap-2">
@@ -550,6 +553,20 @@ export default function EmployeesPage() {
                 />
                 <p className="text-xs text-gray-400 mt-1">
                   สัปดาห์ก่อนวันเริ่มงานจะไม่นับเป็น &quot;ยังไม่ส่ง&quot; และไม่นำไปคิด Utilization
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  วันสุดท้ายที่ทำงาน <span className="text-gray-400 font-normal">(กรอกเมื่อลาออก)</span>
+                </label>
+                <input
+                  type="date"
+                  value={form.endDate}
+                  onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                  className="ges-input"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  รายงานนับถึงวันนี้แล้วหยุด — ช่วงก่อนหน้ายังนับตามปกติ แม้ปิดบัญชีแล้ว · ลาออกแล้วกด &quot;ปิด&quot; บัญชีด้วยเพื่อไม่ให้ login ได้
                 </p>
               </div>
               {(form.role === "ges_management" || form.role === "ges_pd") && (

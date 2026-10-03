@@ -18,6 +18,7 @@ model Employee {
   managedDept String   @default("")  // for ges_management/ges_pd: the department they oversee
   isActive    Boolean  @default(true)
   startDate   DateTime? @db.Date  // first working day; null = employed before the system existed
+  endDate     DateTime? @db.Date  // last working day (resigned); reports stop counting after it
   orgUnitId   String?  // sub-unit inside the department (null = directly under the department)
   createdAt   DateTime @default(now())
 

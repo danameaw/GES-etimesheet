@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
-import { isEmployedInWeek } from "@/lib/employment-period";
+import { isEmployedInWeek, employedFrom } from "@/lib/employment-period";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import {
   holidayWeekdaySet, weekCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours, availableHrs, pctOf,
@@ -61,7 +61,7 @@ function weekRange(weekStart: Date) {
 // Chargeable Utilization = project hrs / (capacity - personal leave); see lib/capacity.ts
 async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeks: Date[], isMonth: boolean) {
   const [allEmployeesRaw, timesheets, holidayRows] = await Promise.all([
-    prisma.employee.findMany({ where: { isActive: true }, orderBy: { department: "asc" } }),
+    prisma.employee.findMany({ where: employedFrom(weeks[0]), orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
       where: { weekStart: tsWeekFilter },
       include: {
