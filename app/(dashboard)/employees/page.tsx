@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
+import EmployeeBulkUpdate from "@/components/EmployeeBulkUpdate";
 
 interface Employee {
   id: string;
@@ -345,6 +346,7 @@ export default function EmployeesPage() {
           <p className="text-gray-500 text-sm">เพิ่ม / แก้ไข / ปิดใช้งานบัญชีพนักงาน</p>
         </div>
         <div className="flex gap-2">
+          <EmployeeBulkUpdate onDone={load} />
           <button onClick={exportEmployees} className="ges-btn-secondary flex items-center gap-2">
             <span>📤</span> Export
           </button>
