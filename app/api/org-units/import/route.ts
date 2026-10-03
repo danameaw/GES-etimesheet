@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
   for (const u of units) {
     const code = String(u.headEmployeeId || "").trim().toUpperCase();
     if (!code) continue;
+    // department-level rows are not units — the department head is set via role / managedDept
+    if (split(u.path).length < 2) { errors.push(`${norm(u.path)}: เป็นระดับแผนก ไม่ใช่หน่วย — ข้ามหัวหน้า ${code}`); continue; }
     const emp = empByCode.get(code);
     if (!emp) { errors.push(`หัวหน้า ${code} (${norm(u.path)}): ไม่พบรหัสพนักงานในระบบ`); continue; }
     headChanges.push({ path: norm(u.path), empId: emp.id, label: `${emp.employeeId} ${emp.name}` });
