@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const allProjects  = searchParams.get("allProjects") === "1";
 
   // Build project filter:
-  // pd normal      → projects where pdId = empDbId
+  // pd normal      → projects where they are PD or PM
   // pd forApproval → all active non-draft projects
   // ges_management → same as pd
   // admin / md     → all active projects (forApproval: non-draft only; allProjects: all)
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   if (role === "pd" || role === "ges_pd" || role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
-      : { pdId: empDbId, isActive: true };
+      : { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] }; // PD or PM of the project
   }
   if ((role === "admin" || role === "md") && forApproval && !allProjects) {
     projectWhere = { isActive: true, planStatus: { not: "draft" } };
@@ -150,8 +150,14 @@ export async function PATCH(req: NextRequest) {
 
   // PM submits plan — create one pending approval per department / unit of the planned staff
   if (action === "submit") {
-    if (!["pd", "admin", "md"].includes(role))
+    if (!["pd", "ges_pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // the project's PM plans the people and submits; admin / md may submit on their behalf
+    if (role !== "admin" && role !== "md") {
+      const proj = await prisma.project.findUnique({ where: { id: projectId }, select: { managerId: true } });
+      if (proj?.managerId !== (session.user as any).id)
+        return NextResponse.json({ error: "เฉพาะ PM ของโครงการนี้ที่ Submit แผนได้" }, { status: 403 });
+    }
 
     await prisma.$transaction([
       prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } }),

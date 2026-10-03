@@ -127,6 +127,7 @@ export default function ResourcePlanPage() {
 
   // Plan status is stored on the project itself
   const planStatus = selectedProj?.planStatus || "draft";
+  const canSubmitPlan = role === "admin" || role === "md" || (!!selectedProj?.manager && selectedProj.manager.id === (session?.user as any)?.id);
   const canEditPlan = planStatus === "draft";
 
   /** ถ้ากรอก 0 < v ≤ 1.5 → ถือว่าเป็น MM multiplier แปลงเป็นชั่วโมงมาตรฐาน */
@@ -407,8 +408,13 @@ export default function ResourcePlanPage() {
                         </>
                       )}
 
-                      {/* Submit Plan button — only when draft */}
-                      {canEditPlan && (
+                      {/* Submit Plan button — only when draft, only the project's PM (admin / md may too) */}
+                      {canEditPlan && !canSubmitPlan && (
+                        <span className="text-xs text-gray-400" title="เฉพาะ PM ของโครงการที่ Submit แผนได้">
+                          Submit โดย PM: {selectedProj?.manager?.name ?? "— ยังไม่ระบุ PM —"}
+                        </span>
+                      )}
+                      {canEditPlan && canSubmitPlan && (
                         <button onClick={submitPlan}
                           disabled={saving === "submit" || empGrandTotal === 0}
                           className="ges-btn-primary text-xs px-3 py-1.5">
