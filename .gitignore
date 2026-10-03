@@ -36,4 +36,4 @@ OH-fixed-*.xlsx
 
 # Staff data exports (personal data — never commit)
 org_structure*.xlsx
-employee_import_*.xlsx
+employee_*.xlsx
