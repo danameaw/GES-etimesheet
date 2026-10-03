@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { entryMonthHours } from "@/lib/capacity";
-import { loadUnitIndex, canApproveKey, scopeDeptOf } from "@/lib/org-units";
+import { loadUnitIndex, canApproveKey, mgmtScope } from "@/lib/org-units";
 import { syncPlanApprovals, approvalsWithLabels, currentApprovalKeys } from "@/lib/plan-approvals";
 
 const PROJECT_INCLUDE = {
@@ -185,7 +185,8 @@ export async function PATCH(req: NextRequest) {
   if (action === "dept_approve") {
     const empDbId = (session.user as any).id;
     const idx = await loadUnitIndex();
-    const me = { id: empDbId, role, scopeDept: await scopeDeptOf(empDbId, role) };
+    const scope = await mgmtScope(empDbId, role, idx);
+    const me = { id: empDbId, role, scopeDept: scope.dept, managedUnitId: scope.managedUnitId };
     const department: string | null = body.department ?? me.scopeDept;
     if (!department) return NextResponse.json({ error: "Cannot determine department" }, { status: 400 });
 

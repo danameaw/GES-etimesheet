@@ -16,6 +16,7 @@ model Employee {
   level       String   @default("")  // links to StandardRate.level (set by PD)
   role        String   @default("employee")  // employee | pd | ges_management | ges_pd | admin | md
   managedDept String   @default("")  // for ges_management/ges_pd: the department they oversee
+  managedUnitId String? // optional: limit a ges_management/ges_pd to one unit (and below) inside managedDept
   isActive    Boolean  @default(true)
   startDate   DateTime? @db.Date  // first working day; null = employed before the system existed
   endDate     DateTime? @db.Date  // last working day (resigned); reports stop counting after it

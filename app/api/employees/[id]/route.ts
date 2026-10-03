@@ -14,7 +14,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept, startDate, endDate, orgUnitId } = body;
+  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept, startDate, endDate, orgUnitId, managedUnitId } = body;
 
   // PD can ONLY change level
   if (role === "ges_management") {
@@ -50,10 +50,24 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
   }
 
+  // managed unit (GES Management limited to one unit) must sit in the managed department
+  let managedUnitUpdate: { managedUnitId: string | null } | undefined;
+  if (managedUnitId !== undefined) {
+    if (managedUnitId) {
+      const mu = await prisma.orgUnit.findUnique({ where: { id: managedUnitId }, select: { department: true } });
+      const mDept = managedDept !== undefined ? String(managedDept).trim()
+        : (await prisma.employee.findUnique({ where: { id: params.id }, select: { managedDept: true } }))?.managedDept;
+      if (!mu || mu.department !== mDept)
+        return NextResponse.json({ error: "หน่วยที่ดูแลต้องอยู่ในแผนกที่ดูแล" }, { status: 400 });
+    }
+    managedUnitUpdate = { managedUnitId: managedUnitId || null };
+  }
+
   const employee = await prisma.employee.update({
     where: { id: params.id },
     data: {
       ...unitUpdate,
+      ...managedUnitUpdate,
       ...(employeeId && { employeeId: employeeId.trim().toUpperCase() }),
       ...(name && { name: name.trim() }),
       ...(department && { department: department.trim() }),

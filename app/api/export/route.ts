@@ -8,6 +8,7 @@ import {
   entryMonthHours, weekStartFilterForRange,
 } from "@/lib/capacity";
 import { isGesMgmt } from "@/lib/roles";
+import { mgmtScope, scopeEmployeeWhere, loadUnitIndex } from "@/lib/org-units";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -291,15 +292,18 @@ export async function GET(req: NextRequest) {
     writeMissingSheet(wb, "Missing Timesheet Report", subtitle, util.missing);
 
   } else if (type === "plan-actual") {
-    // Admin: ทุกแผนก · GES Management: เฉพาะแผนกที่ดูแล (managedDept หรือแผนกตัวเอง)
+    // Admin: ทุกแผนก · GES Management: เฉพาะแผนกที่ดูแล (managedDept หรือแผนกตัวเอง) หรือเฉพาะหน่วยที่ดูแล
     if (role !== "admin" && !isGesMgmt(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     let scopeDept: string | null = null;
+    let scopeLabel = "ทุกแผนก";
+    let empScope: ReturnType<typeof scopeEmployeeWhere> = {};
     if (role !== "admin") {
-      const me = await prisma.employee.findUnique({
-        where: { id: (session.user as any).id }, select: { managedDept: true, department: true },
-      });
-      scopeDept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
+      const idx = await loadUnitIndex();
+      const scope = await mgmtScope((session.user as any).id, role, idx);
+      scopeDept = scope.dept;
       if (!scopeDept) return NextResponse.json({ error: "No department assigned" }, { status: 403 });
+      empScope = scopeEmployeeWhere(scope);
+      scopeLabel = scope.managedUnitId ? `หน่วย: ${idx.fullPath(scope.managedUnitId)}` : `แผนก: ${scopeDept}`;
     }
 
     // Period: fromMonth/toMonth ("yyyy-MM", may span years) — falls back to ?year= (Jan–Dec)
@@ -337,7 +341,7 @@ export async function GET(req: NextRequest) {
 
     const [plans, rawEntries] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
-        where: { year: { gte: first.y, lte: last.y }, ...projWhere, ...(scopeDept ? { employee: { department: scopeDept } } : {}) },
+        where: { year: { gte: first.y, lte: last.y }, ...projWhere, ...(scopeDept ? { employee: empScope } : {}) },
         include: {
           employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
           project:  { select: { id: true, projectNumber: true, projectName: true } },
@@ -349,7 +353,7 @@ export async function GET(req: NextRequest) {
           timesheet: {
             weekStart: weekStartFilterForRange(rangeStart, rangeEnd),
             status: { in: DONE_STATUSES },
-            ...(scopeDept ? { employee: { department: scopeDept } } : {}),
+            ...(scopeDept ? { employee: empScope } : {}),
           },
           taskCode: { code: { notIn: LEAVE_CODES } },
           ...(projIdFilter ? { projectId: { in: projIdFilter } } : {}),
@@ -405,7 +409,7 @@ export async function GET(req: NextRequest) {
       ...Array(months.length * 2).fill({ width: 10 }),
       { width: 14 }, { width: 14 }, { width: 10 },
     ];
-    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${periodText}`, `หน่วย: Man-Month (176 ชม.)   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, colCount);
+    addTitleBand(ws, `GES E-Timesheet — Plan vs Actual ${periodText}`, `หน่วย: Man-Month (176 ชม.)   •   ${scopeLabel}   •   Generated: ${generatedAt}`, colCount);
 
     const headerMonth: (string)[] = ["โครงการ / พนักงาน", "รหัสพนักงาน", "ตำแหน่ง", "แผนก"];
     const headerSub: string[] = ["", "", "", ""];
@@ -512,7 +516,7 @@ export async function GET(req: NextRequest) {
     const addMMSheet = (sheetName: string, title: string, firstHeader: string) => {
       const ws = wb.addWorksheet(sheetName);
       ws.columns = [{ width: 40 }, ...Array(months.length * 2).fill({ width: 10 }), { width: 14 }, { width: 14 }, { width: 10 }];
-      addTitleBand(ws, title, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   ${scopeDept ? `แผนก: ${scopeDept}` : "ทุกแผนก"}   •   Generated: ${generatedAt}`, dsColCount);
+      addTitleBand(ws, title, `หน่วย: Man-Month (176 ชม.)   •   Plan / Actual = รวมของพนักงานในแผนก   •   ${scopeLabel}   •   Generated: ${generatedAt}`, dsColCount);
       const head1: string[] = [firstHeader];
       const head2: string[] = [""];
       for (const mo of months) {

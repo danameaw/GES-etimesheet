@@ -93,6 +93,7 @@ export async function DELETE(req: NextRequest) {
   if (childCount > 0) return NextResponse.json({ error: "ลบหน่วยย่อยข้างใต้ก่อน" }, { status: 400 });
   await prisma.$transaction([
     prisma.employee.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } }),
+    prisma.employee.updateMany({ where: { managedUnitId: id }, data: { managedUnitId: null } }),
     prisma.resourcePlanDeptApproval.deleteMany({ where: { unitId: id } }),
     prisma.orgUnit.delete({ where: { id } }),
   ]);

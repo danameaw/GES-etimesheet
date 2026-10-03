@@ -106,7 +106,7 @@ export function approvalKeyFor(idx: UnitIndex, emp: { id: string; department: st
   return { department: emp.department, unitId: u?.id ?? "" };
 }
 
-export type Approver = { id: string; role: string; scopeDept: string | null };
+export type Approver = { id: string; role: string; scopeDept: string | null; managedUnitId?: string | null };
 
 /**
  * อนุมัติคีย์นี้ได้ไหม:
@@ -116,14 +116,42 @@ export type Approver = { id: string; role: string; scopeDept: string | null };
  */
 export function canApproveKey(idx: UnitIndex, me: Approver, key: ApprovalKey): boolean {
   if (me.role === "admin" || me.role === "md") return true;
-  if ((me.role === "ges_management" || me.role === "ges_pd") && me.scopeDept === key.department) return true;
+  if ((me.role === "ges_management" || me.role === "ges_pd") && me.scopeDept === key.department) {
+    // limited to one unit → only that unit and below (not department-level parts)
+    if (!me.managedUnitId) return true;
+    if (key.unitId && idx.ancestorsAndSelf(key.unitId).some((u) => u.id === me.managedUnitId)) return true;
+  }
   if (!key.unitId) return false;
   return idx.ancestorsAndSelf(key.unitId).some((u) => u.headId === me.id);
 }
 
 /** แผนกที่ GES Management ดูแล (managedDept หรือแผนกตัวเอง) */
 export async function scopeDeptOf(empDbId: string, role: string): Promise<string | null> {
-  if (role !== "ges_management" && role !== "ges_pd") return null;
-  const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true, department: true } });
-  return (me?.managedDept && me.managedDept.trim()) || me?.department || null;
+  return (await mgmtScope(empDbId, role)).dept;
+}
+
+export type MgmtScope = {
+  dept: string | null;            // department overseen (null = not GES Management)
+  managedUnitId: string | null;   // limited to this unit…
+  unitIds: string[] | null;       // …and these (unit + all sub-units); null = whole department
+};
+
+/** ขอบเขตของ GES Management: ทั้งแผนก หรือเฉพาะหน่วยที่ดูแล (managedUnitId) + หน่วยย่อย */
+export async function mgmtScope(empDbId: string, role: string, idx?: UnitIndex): Promise<MgmtScope> {
+  if (role !== "ges_management" && role !== "ges_pd") return { dept: null, managedUnitId: null, unitIds: null };
+  const me = await prisma.employee.findUnique({
+    where: { id: empDbId }, select: { managedDept: true, department: true, managedUnitId: true },
+  });
+  const dept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
+  if (!me?.managedUnitId) return { dept, managedUnitId: null, unitIds: null };
+  const index = idx ?? await loadUnitIndex();
+  return { dept, managedUnitId: me.managedUnitId, unitIds: Array.from(index.descendants(me.managedUnitId)) };
+}
+
+/** Prisma employee filter for a management scope ({} = no restriction) */
+export function scopeEmployeeWhere(scope: { dept: string | null; unitIds: string[] | null }) {
+  return {
+    ...(scope.dept ? { department: scope.dept } : {}),
+    ...(scope.unitIds ? { orgUnitId: { in: scope.unitIds } } : {}),
+  };
 }

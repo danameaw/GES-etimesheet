@@ -6,7 +6,7 @@ import {
   holidayWeekdaySet, monthCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours,
   availableHrs, plannableHrs, pctOf, HoursBreakdown, OH_ALLOWANCE_PCT,
 } from "@/lib/capacity";
-import { loadUnitIndex, approvalKeyFor, canApproveKey, PATH_SEP } from "@/lib/org-units";
+import { loadUnitIndex, approvalKeyFor, canApproveKey, PATH_SEP, mgmtScope, scopeEmployeeWhere } from "@/lib/org-units";
 import { syncPlanApprovals, approvalsWithLabels, approvalLabel } from "@/lib/plan-approvals";
 
 const MS_13H = 13 * 60 * 60 * 1000;
@@ -23,7 +23,6 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role       = (session.user as any).role;
   const empDbId    = (session.user as any).id;
-  const employeeId = (session.user as any).employeeId;
 
   // Unit heads (any role) see the units they lead and everything below them
   const idx = await loadUnitIndex();
@@ -35,19 +34,13 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const year = Number(searchParams.get("year") ?? new Date().getFullYear());
 
-  // ges_management: only own department — use managedDept, fallback to department
-  let myDept: string | null = null;
-  if (role === "ges_management" || role === "ges_pd") {
-    const me = await prisma.employee.findFirst({
-      where: { OR: [{ id: empDbId }, { employeeId }] },
-      select: { managedDept: true, department: true },
-    });
-    myDept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
-  }
+  // ges_management: own department (managedDept, fallback to department), or only their managed unit
+  const scope = await mgmtScope(empDbId, role, idx);
+  const myDept = scope.dept;
 
   // Scope: GES Management → their department; unit head only → their units
   // (a PD who also heads units sees those units; admin / md see everything)
-  const empScope = myDept ? { department: myDept }
+  const empScope = myDept ? scopeEmployeeWhere(scope)
     : !["admin", "md"].includes(role) && headedUnits.size > 0 ? { orgUnitId: { in: Array.from(headedUnits) } }
     : null;
 
@@ -184,7 +177,7 @@ export async function GET(req: NextRequest) {
   for (const pid of lockedIds) await syncPlanApprovals(pid, idx);
 
   // Approval status per project, with whether the viewer may approve each part
-  const me = { id: empDbId, role, scopeDept: myDept };
+  const me = { id: empDbId, role, scopeDept: myDept, managedUnitId: scope.managedUnitId };
   const deptApprovalMap: Record<string, { department: string; unitId: string; label: string; status: string; canApprove: boolean }[]> = {};
   for (const da of await approvalsWithLabels(projectIds, idx)) {
     (deptApprovalMap[da.projectId] ??= []).push({

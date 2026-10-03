@@ -17,6 +17,7 @@ interface Employee {
   startDate: string | null;
   endDate: string | null;
   orgUnitId: string | null;
+  managedUnitId: string | null;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
 }
 
@@ -61,7 +62,7 @@ const DEPARTMENTS = [
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", endDate: "", orgUnitId: "" };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", endDate: "", orgUnitId: "", managedUnitId: "" };
 
 interface UnitOption { id: string; department: string; path: string; depth: number; }
 
@@ -124,6 +125,7 @@ export default function EmployeesPage() {
       startDate: emp.startDate?.slice(0, 10) || "",
       endDate: emp.endDate?.slice(0, 10) || "",
       orgUnitId: emp.orgUnitId || "",
+      managedUnitId: emp.managedUnitId || "",
     });
     setFormError("");
     setEditingId(emp.id);
@@ -576,12 +578,26 @@ export default function EmployeesPage() {
                   </label>
                   <select
                     value={form.managedDept}
-                    onChange={(e) => setForm({ ...form, managedDept: e.target.value })}
+                    onChange={(e) => setForm({ ...form, managedDept: e.target.value, managedUnitId: "" })}
                     className="ges-input"
                   >
                     <option value="">-- ไม่ระบุ (เห็นทุก dept) --</option>
                     {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
+                </div>
+              )}
+              {(form.role === "ges_management" || form.role === "ges_pd") && units.some((u) => u.department === form.managedDept) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    หน่วยที่ดูแล <span className="text-gray-400 font-normal">(เว้นว่าง = ทั้งแผนก)</span>
+                  </label>
+                  <select value={form.managedUnitId} onChange={(e) => setForm({ ...form, managedUnitId: e.target.value })} className="ges-input">
+                    <option value="">— ทั้งแผนก {form.managedDept} —</option>
+                    {units.filter((u) => u.department === form.managedDept).map((u) => (
+                      <option key={u.id} value={u.id}>{"  ".repeat(u.depth - 1)}{u.path.split(" > ").slice(-1)[0]}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">เห็น Dashboard / Workload / Export และอนุมัติแผน เฉพาะหน่วยนี้และหน่วยย่อย</p>
                 </div>
               )}
               {modal === "edit" && (

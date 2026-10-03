@@ -6,6 +6,7 @@ import { isPD, isGesMgmt } from "@/lib/roles";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
 import { employedFrom } from "@/lib/employment-period";
+import { loadUnitIndex } from "@/lib/org-units";
 import {
   holidayWeekdaySet, monthCompanyCapacity, weekCompanyCapacity, classifyEntry, entryDays,
   emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, HRS_PER_DAY, UTILIZATION_TARGET,
@@ -56,11 +57,17 @@ export async function GET(req: NextRequest) {
 
   // ── Role-based auto-filters ──────────────────────────────────────────────
   // GES Management (incl. ges_pd): auto-filter to their managed department
+  // …or only their managed unit (and its sub-units) when managedUnitId is set
   let deptFilter = searchParams.get("dept") || "";
+  let unitIds: string[] | null = null;
   if (isGesMgmt(role) && !deptFilter) {
-    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true } });
+    const me = await prisma.employee.findUnique({ where: { id: empDbId }, select: { managedDept: true, managedUnitId: true } });
     deptFilter = me?.managedDept ?? "";
+    if (deptFilter && me?.managedUnitId) unitIds = Array.from((await loadUnitIndex()).descendants(me.managedUnitId));
   }
+  const empScopeWhere = deptFilter
+    ? { department: deptFilter, ...(unitIds ? { orgUnitId: { in: unitIds } } : {}) }
+    : {};
 
   // PD (incl. ges_pd): restrict to own projects
   let pdProjectIds: string[] | null = null;
@@ -104,7 +111,7 @@ export async function GET(req: NextRequest) {
   if (Object.keys(dateFilter).length) tsWhere.weekStart = dateFilter;
   if (projectId) tsWhere.entries = { some: { projectId } };
   else if (pdProjectIds) tsWhere.entries = { some: { projectId: { in: pdProjectIds } } };
-  if (deptFilter) tsWhere.employee = { ...tsWhere.employee, department: deptFilter };
+  if (deptFilter) tsWhere.employee = { ...tsWhere.employee, ...empScopeWhere };
 
   const allTS = await prisma.timesheet.findMany({
     where: tsWhere,
@@ -146,7 +153,7 @@ export async function GET(req: NextRequest) {
   }
   // GES Management: filter plan เฉพาะพนักงานใน dept นั้น
   if (deptFilter) {
-    Object.assign(planWhere, { employee: { department: deptFilter, ...staffFilter } });
+    Object.assign(planWhere, { employee: { ...empScopeWhere, ...staffFilter } });
   }
   const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
     where: planWhere,
@@ -192,6 +199,7 @@ export async function GET(req: NextRequest) {
     if (LEAVE_CODES.includes(e.taskCode.code)) continue;
     const emp = e.ts.employee;
     if (deptFilter && emp.department !== deptFilter) continue;
+    if (unitIds && !unitIds.includes(emp.orgUnitId ?? "")) continue;
     const x = empMap.get(emp.id);
     if (x) x.hours += e.totalHrs;
     else empMap.set(emp.id, { name: emp.name, hours: e.totalHrs, department: emp.department });
@@ -276,7 +284,7 @@ export async function GET(req: NextRequest) {
     const [empPlans, empTimesheets] = await Promise.all([
       prisma.resourcePlanEmployeeMonthly.findMany({
         where: {
-          employee: { department: deptFilter, ...employedFrom(matStart) },
+          employee: { ...empScopeWhere, ...employedFrom(matStart) },
           OR: matMonths.map((m) => ({ year: m.year, month: m.month })),
         },
         include: { employee: { select: { id: true, employeeId: true, name: true, position: true } } },
@@ -284,7 +292,7 @@ export async function GET(req: NextRequest) {
       prisma.timesheet.findMany({
         where: {
           weekStart: weekStartFilterForRange(matStart, new Date(matEnd.getTime() + 86400000)),
-          employee: { department: deptFilter, ...employedFrom(matStart) },
+          employee: { ...empScopeWhere, ...employedFrom(matStart) },
           status: { in: ["submitted", "approved"] },
         },
         include: {
@@ -341,7 +349,7 @@ export async function GET(req: NextRequest) {
     employee: { ...staffFilter },
   };
   if (Object.keys(dateFilter).length) leaveTsWhere.weekStart = dateFilter;
-  if (deptFilter) leaveTsWhere.employee = { ...leaveTsWhere.employee, department: deptFilter };
+  if (deptFilter) leaveTsWhere.employee = { ...leaveTsWhere.employee, ...empScopeWhere };
 
   // PD: แสดง leave เฉพาะพนักงานที่มีงานใน project ของ PD (ใน period นี้)
   const pdEmpDbIds = pdProjectIds !== null
@@ -399,7 +407,7 @@ export async function GET(req: NextRequest) {
     }
     const [capEmployees, capHolidays, capTS] = await Promise.all([
       prisma.employee.findMany({
-        where: { ...employedFrom(periodStart), ...(deptFilter ? { department: deptFilter } : {}) },
+        where: { ...employedFrom(periodStart), ...empScopeWhere },
         select: { id: true, employeeId: true, startDate: true, endDate: true },
       }),
       prisma.holiday.findMany({ where: { date: { gte: periodStart, lt: periodEnd } }, select: { date: true } }),
@@ -407,7 +415,7 @@ export async function GET(req: NextRequest) {
         where: {
           weekStart: { gte: new Date(periodStart.getTime() - 7 * DAY - MS_13H), lt: new Date(periodEnd.getTime() + MS_13H) },
           status: { in: ["submitted", "approved"] },
-          employee: { ...employedFrom(periodStart), ...(deptFilter ? { department: deptFilter } : {}) },
+          employee: { ...employedFrom(periodStart), ...empScopeWhere },
         },
         include: { entries: { include: { project: { select: { projectNumber: true, projectType: true } }, taskCode: { select: { code: true } } } } },
       }),
