@@ -417,6 +417,7 @@ export default function AdminPage() {
               <ExportBtn type="weekly"      {...p} label="📥 Detail" />
               <ExportBtn type="task"        {...p} label="🧩 By Task" />
               <ExportBtn type="project"     {...p} label="🗂 By Project" />
+              <ExportBtn type="department"  {...p} label="🏢 By Department" />
               <ExportBtn type="employee"    {...p} label="👤 By Employee" />
               <ExportBtn type="utilization" {...p} label="📊 Utilization" />
               <ExportBtn type="missing"     {...p} label="⚠ Missing" />

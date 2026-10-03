@@ -8,7 +8,8 @@ import {
   entryMonthHours, weekStartFilterForRange,
 } from "@/lib/capacity";
 import { isGesMgmt } from "@/lib/roles";
-import { mgmtScope, scopeEmployeeWhere, loadUnitIndex } from "@/lib/org-units";
+import { mgmtScope, scopeEmployeeWhere, loadUnitIndex, PATH_SEP } from "@/lib/org-units";
+import { writeGroupedPlanActualSheet, weekdaysBetween, newAgg, Agg, Group } from "@/lib/export/dept-summary";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -196,6 +197,103 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Plan vs Actual of every department (and sub-unit) in every project for the chosen period —
+  // its own report ("department") and part of the main Excel ("executive")
+  async function writeDepartmentSheets() {
+    // Plan vs Actual of every department (and sub-unit) in every project for the chosen period.
+    // Actual = submitted/approved hours (no leave) of the period's weeks; Plan = monthly employee plans
+    // pro-rated by the weekdays of each month that fall inside the period.
+    const empDbId = (session!.user as any).id;
+    const idx = await loadUnitIndex();
+    const scope = await mgmtScope(empDbId, role, idx);           // GES Management → own department / unit
+    const empWhere = scope.dept ? scopeEmployeeWhere(scope) : {};
+    let allowedProjIds: string[] | null = projIds;
+    if (role === "pd") {                                         // PD → own projects (PD or PM)
+      const own = (await prisma.project.findMany({ where: { OR: [{ pdId: empDbId }, { managerId: empDbId }] }, select: { id: true } })).map((p) => p.id);
+      allowedProjIds = projIds ? projIds.filter((i) => own.includes(i)) : own;
+    }
+    const projWhere = allowedProjIds ? { projectId: { in: allowedProjIds } } : {};
+
+    const rangeStart = weeks[0];
+    const rangeEnd = new Date(weeks[weeks.length - 1].getTime() + 7 * 86400000);
+    const monthsInRange: { year: number; month: number; factor: number }[] = [];
+    for (let y = rangeStart.getUTCFullYear(), m = rangeStart.getUTCMonth(); Date.UTC(y, m, 1) < rangeEnd.getTime(); m++) {
+      if (m > 11) { y++; m = 0; }
+      const mStart = new Date(Date.UTC(y, m, 1)), mEnd = new Date(Date.UTC(y, m + 1, 1));
+      const inRange = weekdaysBetween(new Date(Math.max(mStart.getTime(), rangeStart.getTime())), new Date(Math.min(mEnd.getTime(), rangeEnd.getTime())));
+      monthsInRange.push({ year: y, month: m + 1, factor: inRange / (weekdaysBetween(mStart, mEnd) || 1) });
+    }
+    const factorOf = new Map(monthsInRange.map((x) => [`${x.year}-${x.month}`, x.factor]));
+
+    const empSel = { select: { id: true, department: true, orgUnitId: true } };
+    const projSel = { select: { id: true, projectNumber: true, projectName: true } };
+    const [entries, plans] = await Promise.all([
+      prisma.timesheetEntry.findMany({
+        where: {
+          timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES }, employee: empWhere },
+          taskCode: { code: { notIn: LEAVE_TASK_CODES } },
+          ...projWhere,
+        },
+        include: { project: projSel, timesheet: { select: { employee: empSel } } },
+      }),
+      prisma.resourcePlanEmployeeMonthly.findMany({
+        where: { ...projWhere, employee: empWhere, OR: monthsInRange.map(({ year, month }) => ({ year, month })) },
+        include: { project: projSel, employee: empSel },
+      }),
+    ]);
+
+    // aggregate by department / unit / project
+    const projInfo = new Map<string, { num: string; name: string }>();
+    const deptProj = new Map<string, Map<string, Agg>>();
+    const unitProj = new Map<string, Map<string, Agg>>();       // "dept|unitId"
+    const projDept = new Map<string, Map<string, Agg>>();
+    const bump = (map: Map<string, Map<string, Agg>>, k1: string, k2: string) => {
+      if (!map.has(k1)) map.set(k1, new Map());
+      const inner = map.get(k1)!;
+      if (!inner.has(k2)) inner.set(k2, newAgg());
+      return inner.get(k2)!;
+    };
+    const add = (emp: { id: string; department: string; orgUnitId: string | null }, proj: { id: string; projectNumber: string; projectName: string }, plan: number, actual: number) => {
+      projInfo.set(proj.id, { num: proj.projectNumber, name: proj.projectName });
+      for (const a of [bump(deptProj, emp.department, proj.id), bump(unitProj, `${emp.department}|${emp.orgUnitId ?? ""}`, proj.id), bump(projDept, proj.id, emp.department)]) {
+        a.plan += plan; a.actual += actual;
+        if (actual > 0) a.people.add(emp.id);
+      }
+    };
+    for (const e of entries) if (e.totalHrs > 0) add(e.timesheet.employee, e.project, 0, e.totalHrs);
+    for (const p of plans) add(p.employee, p.project, p.plannedHrs * (factorOf.get(`${p.year}-${p.month}`) ?? 0), 0);
+
+    const byNum = (a: string, b: string) => (projInfo.get(a)?.num ?? "").localeCompare(projInfo.get(b)?.num ?? "");
+    const projRows = (m: Map<string, Agg>) => Array.from(m.entries()).sort((a, b) => byNum(a[0], b[0]))
+      .map(([pid, agg]) => ({ key: [projInfo.get(pid)!.num, projInfo.get(pid)!.name], agg }));
+    const scopeText = scope.managedUnitId ? `หน่วย: ${idx.fullPath(scope.managedUnitId)}` : scope.dept ? `แผนก: ${scope.dept}` : role === "pd" ? "โครงการที่ดูแล" : "ทุกแผนก";
+    const sub = `Period: ${weekLabel}   •   ${scopeText}   •   Plan pro-rate ตามวันทำงานในช่วง · 1 MM = 176 ชม.   •   Generated: ${generatedAt}`;
+    const projCols = [{ header: "Project No.", width: 14 }, { header: "Project Name", width: 40 }];
+
+    const deptGroups: Group[] = Array.from(deptProj.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dept, m]) => ({ label: dept, rows: projRows(m) }));
+    writeGroupedPlanActualSheet(wb, "Dept x Project", "GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ", sub, projCols, deptGroups, "รวม");
+
+    // sub-units: only departments that have units
+    const deptsWithUnits = new Set(Array.from(idx.byId.values()).map((u) => u.department));
+    const unitGroups: Group[] = Array.from(unitProj.entries())
+      .filter(([k]) => deptsWithUnits.has(k.split("|")[0]))
+      .map(([k, m]) => {
+        const [dept, unitId] = k.split("|");
+        return { label: unitId ? [dept, ...idx.names(unitId)].join(PATH_SEP) : `${dept} (ขึ้นตรงกับแผนก)`, rows: projRows(m) };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+    if (unitGroups.length > 0)
+      writeGroupedPlanActualSheet(wb, "Unit x Project", "GES E-Timesheet — สรุปรายหน่วยย่อย แยกตามโครงการ", sub, projCols, unitGroups, "รวม");
+
+    const projGroups: Group[] = Array.from(projDept.entries()).sort((a, b) => byNum(a[0], b[0]))
+      .map(([pid, m]) => ({
+        label: `${projInfo.get(pid)!.num} — ${projInfo.get(pid)!.name}`,
+        rows: Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([dept, agg]) => ({ key: [dept], agg })),
+      }));
+    writeGroupedPlanActualSheet(wb, "Project x Dept", "GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก", sub, [{ header: "แผนก", width: 30 }], projGroups, "รวม");
+  }
+
   if (type === "weekly") {
     const timesheets = await prisma.timesheet.findMany({
       where: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } },
@@ -290,6 +388,10 @@ export async function GET(req: NextRequest) {
     writeProjectTaskSheet(wb, "By Task", "Hours by Project & Task", subtitle, taskTree);
     writeUtilizationSheet(wb, "Utilization Report", subtitle, util.rows);
     writeMissingSheet(wb, "Missing Timesheet Report", subtitle, util.missing);
+    await writeDepartmentSheets();
+
+  } else if (type === "department") {
+    await writeDepartmentSheets();
 
   } else if (type === "plan-actual") {
     // Admin: ทุกแผนก · GES Management: เฉพาะแผนกที่ดูแล (managedDept หรือแผนกตัวเอง) หรือเฉพาะหน่วยที่ดูแล
