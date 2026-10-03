@@ -15,6 +15,7 @@ interface Employee {
   managedDept: string;
   isActive: boolean;
   startDate: string | null;
+  orgUnitId: string | null;
   managedProjects: { id: string; projectNumber: string; projectName: string }[];
 }
 
@@ -59,12 +60,15 @@ const DEPARTMENTS = [
   "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
-const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "" };
+const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", orgUnitId: "" };
+
+interface UnitOption { id: string; department: string; path: string; depth: number; }
 
 export default function EmployeesPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [units, setUnits] = useState<UnitOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterDept, setFilterDept] = useState("all");
@@ -91,9 +95,10 @@ export default function EmployeesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/employees");
+    const [res, unitRes] = await Promise.all([fetch("/api/employees"), fetch("/api/org-units")]);
     const data = await res.json();
     setEmployees(data.employees || []);
+    if (unitRes.ok) setUnits((await unitRes.json()).units || []);
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -116,6 +121,7 @@ export default function EmployeesPage() {
       managedDept: emp.managedDept || "",
       isActive: emp.isActive,
       startDate: emp.startDate?.slice(0, 10) || "",
+      orgUnitId: emp.orgUnitId || "",
     });
     setFormError("");
     setEditingId(emp.id);
@@ -239,6 +245,13 @@ export default function EmployeesPage() {
     reader.readAsArrayBuffer(file);
   }
 
+  // "Procurement > Logistic Team" → path inside the department ("" = directly under the department)
+  const unitById = new Map(units.map((u) => [u.id, u]));
+  const unitPathOf = (emp: Employee) => {
+    const u = emp.orgUnitId ? unitById.get(emp.orgUnitId) : undefined;
+    return u ? u.path.split(" > ").slice(1).join(" > ") : "";
+  };
+
   // ─── Excel Export ─────────────────────────────────────────────────────────
 
   function exportEmployees() {
@@ -246,14 +259,15 @@ export default function EmployeesPage() {
       "Employee ID": emp.employeeId,
       "Name": emp.name,
       "Department": emp.department,
-      "Section (หน่วยย่อย)": "",
+      // full path; edit and re-import on the หน่วยงาน (Org Units) page
+      "Unit (หน่วย)": [emp.department, unitPathOf(emp)].filter(Boolean).join(" > "),
       "Position": emp.position,
       "Level": emp.level || "",
       "Role": ROLES.find((r) => r.value === emp.role)?.label ?? emp.role,
       "Status": emp.isActive ? "Active" : "Inactive",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 20 }, { wch: 22 }, { wch: 26 }, { wch: 20 }, { wch: 16 }, { wch: 10 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 20 }, { wch: 48 }, { wch: 26 }, { wch: 20 }, { wch: 16 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Employees");
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -403,7 +417,10 @@ export default function EmployeesPage() {
                 <tr key={emp.id} className={!emp.isActive ? "opacity-50" : ""}>
                   <td className="font-mono text-xs font-semibold text-blue-900">{emp.employeeId}</td>
                   <td className="font-medium">{emp.name}</td>
-                  <td className="text-xs text-gray-600">{emp.department}</td>
+                  <td className="text-xs text-gray-600">
+                    {emp.department}
+                    {unitPathOf(emp) && <div className="text-[11px] text-indigo-600">{unitPathOf(emp)}</div>}
+                  </td>
                   <td className="text-xs text-gray-600">{emp.position}</td>
                   <td className="text-xs">
                     {emp.level
@@ -482,7 +499,7 @@ export default function EmployeesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">แผนก *</label>
-                  <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className="ges-input">
+                  <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value, orgUnitId: "" })} className="ges-input">
                     <option value="">-- เลือกแผนก --</option>
                     {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
@@ -498,6 +515,19 @@ export default function EmployeesPage() {
                   />
                 </div>
               </div>
+              {units.some((u) => u.department === form.department) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    หน่วย <span className="text-gray-400 font-normal">(หัวหน้าหน่วยอนุมัติแผนของคนในหน่วย)</span>
+                  </label>
+                  <select value={form.orgUnitId} onChange={(e) => setForm({ ...form, orgUnitId: e.target.value })} className="ges-input">
+                    <option value="">— ขึ้นตรงกับแผนก —</option>
+                    {units.filter((u) => u.department === form.department).map((u) => (
+                      <option key={u.id} value={u.id}>{"  ".repeat(u.depth - 1)}{u.path.split(" > ").slice(-1)[0]}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Level</label>
                 <input

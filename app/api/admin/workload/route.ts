@@ -6,6 +6,8 @@ import {
   holidayWeekdaySet, monthCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours,
   availableHrs, plannableHrs, pctOf, HoursBreakdown, OH_ALLOWANCE_PCT,
 } from "@/lib/capacity";
+import { loadUnitIndex, approvalKeyFor, canApproveKey, PATH_SEP } from "@/lib/org-units";
+import { syncPlanApprovals, approvalsWithLabels, approvalLabel } from "@/lib/plan-approvals";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 
@@ -23,7 +25,11 @@ export async function GET(req: NextRequest) {
   const empDbId    = (session.user as any).id;
   const employeeId = (session.user as any).employeeId;
 
-  if (!["ges_management", "ges_pd", "admin", "md", "pd"].includes(role))
+  // Unit heads (any role) see the units they lead and everything below them
+  const idx = await loadUnitIndex();
+  const headedUnits = idx.headedSubtree(empDbId);
+  const fullAccess = ["ges_management", "ges_pd", "admin", "md", "pd"].includes(role);
+  if (!fullAccess && headedUnits.size === 0)
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -39,14 +45,20 @@ export async function GET(req: NextRequest) {
     myDept = (me?.managedDept && me.managedDept.trim()) || me?.department || null;
   }
 
+  // Scope: GES Management → their department; unit head only → their units
+  // (a PD who also heads units sees those units; admin / md see everything)
+  const empScope = myDept ? { department: myDept }
+    : !["admin", "md"].includes(role) && headedUnits.size > 0 ? { orgUnitId: { in: Array.from(headedUnits) } }
+    : null;
+
   // Fetch all plans for this year
   const plans = await prisma.resourcePlanEmployeeMonthly.findMany({
     where: {
       year,
-      ...(myDept ? { employee: { department: myDept } } : {}),
+      ...(empScope ? { employee: empScope } : {}),
     },
     include: {
-      employee: { select: { id: true, employeeId: true, name: true, department: true, position: true } },
+      employee: { select: { id: true, employeeId: true, name: true, department: true, position: true, orgUnitId: true } },
       project:  { select: { id: true, projectNumber: true, projectName: true, planStatus: true } },
     },
     orderBy: [{ employee: { department: "asc" } }, { employee: { name: "asc" } }, { month: "asc" }],
@@ -74,7 +86,7 @@ export async function GET(req: NextRequest) {
         lt:  new Date(Date.UTC(year + 1, 0, 1) + MS_13H),
       },
       status: { in: ["submitted", "approved"] },
-      ...(myDept ? { employee: { department: myDept } } : {}),
+      ...(empScope ? { employee: empScope } : {}),
     },
     include: {
       employee: { select: { id: true } },
@@ -149,64 +161,41 @@ export async function GET(req: NextRequest) {
       name,
       employees: Array.from(empMap.values())
         .sort((a, b) => a.employee.name.localeCompare(b.employee.name))
-        .map((e) => ({
+        .map((e) => {
+          const key = approvalKeyFor(idx, e.employee);
+          return {
           employee: e.employee,
+          unitPath: e.employee.orgUnitId ? idx.names(e.employee.orgUnitId).join(PATH_SEP) : "",
+          approver: { ...key, label: approvalLabel(idx, key) },
           monthStats: e.monthStats,
           projects: Array.from(e.projects.values())
             .sort((a, b) => a.projectNumber.localeCompare(b.projectNumber)),
-        })),
+          };
+        })
+        // group people by unit inside the department
+        .sort((a, b) => a.unitPath.localeCompare(b.unitPath) || a.employee.name.localeCompare(b.employee.name)),
     }));
 
-  // Auto-backfill dept approval records for submitted/approved projects that don't have them yet
+  // Keep approval rows (department / unit) in sync for plans awaiting or past approval
   const projectIds = Array.from(new Set(plans.map((p) => p.project.id)));
-  if (projectIds.length > 0) {
-    const existingApprovals = await prisma.resourcePlanDeptApproval.findMany({
-      where: { projectId: { in: projectIds } },
-      select: { projectId: true, department: true },
+  const lockedIds = Array.from(new Set(plans
+    .filter((p) => ["submitted", "revision_requested", "approved"].includes(p.project.planStatus))
+    .map((p) => p.project.id)));
+  for (const pid of lockedIds) await syncPlanApprovals(pid, idx);
+
+  // Approval status per project, with whether the viewer may approve each part
+  const me = { id: empDbId, role, scopeDept: myDept };
+  const deptApprovalMap: Record<string, { department: string; unitId: string; label: string; status: string; canApprove: boolean }[]> = {};
+  for (const da of await approvalsWithLabels(projectIds, idx)) {
+    (deptApprovalMap[da.projectId] ??= []).push({
+      department: da.department, unitId: da.unitId, label: da.label, status: da.status,
+      canApprove: canApproveKey(idx, me, da),
     });
-    const existingSet = new Set(existingApprovals.map((a) => `${a.projectId}|${a.department}`));
-
-    // Group plans by project+dept to find missing approval records
-    const projDeptMap = new Map<string, { projectId: string; department: string; planStatus: string }>();
-    for (const p of plans) {
-      const proj = p.project as any;
-      if (["submitted", "revision_requested", "approved"].includes(proj.planStatus)) {
-        const key = `${proj.id}|${p.employee.department}`;
-        if (!existingSet.has(key)) {
-          projDeptMap.set(key, {
-            projectId: proj.id,
-            department: p.employee.department,
-            planStatus: proj.planStatus,
-          });
-        }
-      }
-    }
-
-    if (projDeptMap.size > 0) {
-      await prisma.$transaction(
-        Array.from(projDeptMap.values()).map(({ projectId: pid, department }) =>
-          prisma.resourcePlanDeptApproval.upsert({
-            where: { projectId_department: { projectId: pid, department } },
-            create: { projectId: pid, department, status: "pending" },
-            update: {},
-          })
-        )
-      );
-    }
   }
 
-  // Fetch dept approval status for all projects in view
-  const deptApprovals = projectIds.length > 0
-    ? await prisma.resourcePlanDeptApproval.findMany({
-        where: { projectId: { in: projectIds } },
-        select: { projectId: true, department: true, status: true },
-      })
-    : [];
-  const deptApprovalMap: Record<string, { department: string; status: string }[]> = {};
-  for (const da of deptApprovals) {
-    if (!deptApprovalMap[da.projectId]) deptApprovalMap[da.projectId] = [];
-    deptApprovalMap[da.projectId].push({ department: da.department, status: da.status });
-  }
-
-  return NextResponse.json({ year, months: monthMeta, departments, deptApprovalMap, ohAllowancePct: OH_ALLOWANCE_PCT });
+  return NextResponse.json({
+    year, months: monthMeta, departments, deptApprovalMap, ohAllowancePct: OH_ALLOWANCE_PCT,
+    // whole-department approve / revision buttons are for GES Management, admin, md
+    canManagePlans: ["ges_management", "ges_pd", "admin", "md"].includes(role),
+  });
 }

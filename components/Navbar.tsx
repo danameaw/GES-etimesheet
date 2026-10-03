@@ -30,6 +30,8 @@ export default function Navbar() {
   const isPD      = role === "pd" || role === "ges_pd";
   const isGESMgmt = role === "ges_management" || role === "ges_pd";
   const isMD      = role === "md";
+  // unit head without a management role: approves plans of their own units
+  const isUnitHeadOnly = !!(session?.user as any)?.isUnitHead && !isGESMgmt && !isMD && !isAdmin;
 
   const navLinks = [
     { href: "/timesheet",               label: "Timesheet",      icon: "📋", show: true },
@@ -37,13 +39,14 @@ export default function Navbar() {
     { href: "/admin",                   label: "Approval",       icon: "✅", show: isPD },
     { href: "/admin",                    label: "Approval",       icon: "✅", show: isMD },
     { href: "/admin/resource-approval", label: "Plan/Actual",    icon: "📊", show: isMD },
-    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt },
+    { href: "/admin/resource-approval", label: "Approve Plan",   icon: "📝", show: isGESMgmt || isUnitHeadOnly },
     { href: "/standard-rate",           label: "Standard Rate",  icon: "💰", show: isMD },
     { href: "/dashboard",               label: "Dashboard",           icon: "📊", show: isMD },
     { href: "/dashboard",               label: "Dashboard Project",    icon: "📊", show: isPD },
     { href: "/dashboard",               label: "Dashboard Department",  icon: "📊", show: isGESMgmt },
     { href: "/admin",                   label: "Admin View",     icon: "👥", show: isAdmin },
     { href: "/employees",               label: "Employees",      icon: "👤", show: isAdmin },
+    { href: "/org-units",               label: "หน่วยงาน",       icon: "🏢", show: isAdmin },
     { href: "/manage",                  label: "Manage",         icon: "⚙️", show: isAdmin },
   ];
 

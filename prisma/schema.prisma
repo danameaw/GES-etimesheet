@@ -18,7 +18,11 @@ model Employee {
   managedDept String   @default("")  // for ges_management/ges_pd: the department they oversee
   isActive    Boolean  @default(true)
   startDate   DateTime? @db.Date  // first working day; null = employed before the system existed
+  orgUnitId   String?  // sub-unit inside the department (null = directly under the department)
   createdAt   DateTime @default(now())
+
+  orgUnit          OrgUnit?       @relation("OrgUnitMembers", fields: [orgUnitId], references: [id], onDelete: SetNull)
+  headedUnits      OrgUnit[]      @relation("OrgUnitHead")
 
   timesheets       Timesheet[]
   auditLogs        AuditLog[]
@@ -28,6 +32,26 @@ model Employee {
   resourcePlanEmployeeMonthly ResourcePlanEmployeeMonthly[]
   deptApprovalsGiven ResourcePlanDeptApproval[] @relation("DeptApprovalApprover")
   timesheetFavorites TimesheetFavorite[]
+}
+
+// Sub-units inside a department (any depth). Top level = the Employee.department string itself;
+// units with parentId = null sit directly under their department.
+model OrgUnit {
+  id         String   @id @default(cuid())
+  name       String
+  department String   // department this unit belongs to (matches Employee.department)
+  parentId   String?
+  headId     String?  // unit head: approves resource plans of the unit's members
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  parent   OrgUnit?   @relation("OrgUnitTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children OrgUnit[]  @relation("OrgUnitTree")
+  head     Employee?  @relation("OrgUnitHead", fields: [headId], references: [id], onDelete: SetNull)
+  members  Employee[] @relation("OrgUnitMembers")
+
+  @@index([department])
 }
 
 model Project {
@@ -173,6 +197,7 @@ model ResourcePlanDeptApproval {
   id           String    @id @default(cuid())
   projectId    String
   department   String
+  unitId       String    @default("") // OrgUnit id approving this part; "" = department-level approval
   status       String    @default("pending") // pending | approved
   approvedById String?
   approvedAt   DateTime?
@@ -182,7 +207,7 @@ model ResourcePlanDeptApproval {
   project    Project   @relation(fields: [projectId], references: [id])
   approvedBy Employee? @relation("DeptApprovalApprover", fields: [approvedById], references: [id])
 
-  @@unique([projectId, department])
+  @@unique([projectId, department, unitId])
 }
 
 model AuditLog {

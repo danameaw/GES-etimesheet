@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { entryMonthHours } from "@/lib/capacity";
+import { loadUnitIndex, canApproveKey, scopeDeptOf } from "@/lib/org-units";
+import { syncPlanApprovals, approvalsWithLabels, currentApprovalKeys } from "@/lib/plan-approvals";
 
 const PROJECT_INCLUDE = {
   manager: { select: { id: true, name: true, employeeId: true } },
@@ -92,35 +94,13 @@ export async function GET(req: NextRequest) {
     return { department: dept, year: Number(y), month: Number(m), actualHrs: hrs };
   });
 
-  // Auto-backfill dept approval records for this project if missing
+  // Keep approval rows (department / unit) in sync with who is planned on this project
+  const idx = await loadUnitIndex();
   const proj = projects.find((p) => p.id === projectId);
   if (proj && ["submitted", "revision_requested", "approved"].includes((proj as any).planStatus)) {
-    const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
-      where: { projectId },
-      include: { employee: { select: { department: true } } },
-    });
-    const depts = Array.from(new Set(empPlans.map((p) => p.employee.department)));
-    const existing = await prisma.resourcePlanDeptApproval.findMany({
-      where: { projectId },
-      select: { department: true },
-    });
-    const existingDepts = new Set(existing.map((e) => e.department));
-    const missing = depts.filter((d) => !existingDepts.has(d));
-    if (missing.length > 0) {
-      await prisma.$transaction(
-        missing.map((department) =>
-          prisma.resourcePlanDeptApproval.create({ data: { projectId, department, status: "pending" } })
-        )
-      );
-    }
+    await syncPlanApprovals(projectId, idx);
   }
-
-  // Fetch dept approval status for this project
-  const deptApprovals = await prisma.resourcePlanDeptApproval.findMany({
-    where: { projectId },
-    orderBy: { department: "asc" },
-    select: { department: true, status: true },
-  });
+  const deptApprovals = await approvalsWithLabels([projectId], idx);
 
   return NextResponse.json({ projects, departments, plans, actuals, deptApprovals });
 }
@@ -161,36 +141,24 @@ export async function PATCH(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
 
-  if (!["pd", "ges_pd", "ges_management", "admin", "md"].includes(role))
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const body = await req.json();
   const { action, projectId } = body;
+  // unit heads may hold the plain "employee" role — only dept_approve checks them (per key, below)
+  if (action !== "dept_approve" && !["pd", "ges_pd", "ges_management", "admin", "md"].includes(role))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
 
-  // PM submits plan — auto-create dept approval records
+  // PM submits plan — create one pending approval per department / unit of the planned staff
   if (action === "submit") {
     if (!["pd", "admin", "md"].includes(role))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const empPlans = await prisma.resourcePlanEmployeeMonthly.findMany({
-      where: { projectId },
-      include: { employee: { select: { department: true } } },
-    });
-    const depts = Array.from(new Set(empPlans.map((p) => p.employee.department)));
 
     await prisma.$transaction([
       prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } }),
       prisma.resourcePlanMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } }),
       prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "submitted" } }),
-      ...depts.map((dept) =>
-        prisma.resourcePlanDeptApproval.upsert({
-          where: { projectId_department: { projectId, department: dept } },
-          create: { projectId, department: dept, status: "pending" },
-          update: { status: "pending", approvedById: null, approvedAt: null },
-        })
-      ),
     ]);
+    await syncPlanApprovals(projectId, await loadUnitIndex(), true);
     return NextResponse.json({ success: true, planStatus: "submitted" });
   }
 
@@ -205,32 +173,31 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: true, planStatus: "revision_requested" });
   }
 
-  // Per-dept approve: GES Management approves only their own dept
+  // Approve one department / unit part of the plan.
+  // body.unitId given → that unit (unit head of it or an ancestor, GES Management of the dept, admin/md)
+  // no unitId → every part of a department (GES Management of that dept, admin/md)
   if (action === "dept_approve") {
-    if (!["ges_management", "ges_pd", "admin", "md"].includes(role))
+    const empDbId = (session.user as any).id;
+    const idx = await loadUnitIndex();
+    const me = { id: empDbId, role, scopeDept: await scopeDeptOf(empDbId, role) };
+    const department: string | null = body.department ?? me.scopeDept;
+    if (!department) return NextResponse.json({ error: "Cannot determine department" }, { status: 400 });
+
+    await syncPlanApprovals(projectId, idx);
+    const keys = (await currentApprovalKeys(projectId, idx)).filter((k) =>
+      k.department === department && (body.unitId === undefined || k.unitId === String(body.unitId)));
+    if (keys.length === 0) return NextResponse.json({ error: "ไม่มีส่วนที่ต้องอนุมัติ" }, { status: 400 });
+    // whole-department approval needs department rights; a single unit needs rights on that unit
+    if (!keys.every((k) => canApproveKey(idx, me, body.unitId === undefined ? { department, unitId: "" } : k)))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const empDbId = (session.user as any).id;
-    const employeeId = (session.user as any).employeeId;
-    let dept: string | null = null;
-    if (["ges_management", "ges_pd"].includes(role)) {
-      const me = await prisma.employee.findFirst({
-        where: { OR: [{ id: empDbId }, { employeeId }] },
-        select: { managedDept: true, department: true },
-      });
-      dept = (me?.managedDept && me.managedDept.trim()) ? me.managedDept : me?.department ?? null;
-    } else {
-      dept = body.department ?? null;
-    }
-    if (!dept) return NextResponse.json({ error: "Cannot determine department" }, { status: 400 });
+    await prisma.$transaction(keys.map((k) =>
+      prisma.resourcePlanDeptApproval.update({
+        where: { projectId_department_unitId: { projectId, department: k.department, unitId: k.unitId } },
+        data: { status: "approved", approvedById: empDbId, approvedAt: new Date() },
+      })));
 
-    await prisma.resourcePlanDeptApproval.upsert({
-      where: { projectId_department: { projectId, department: dept } },
-      create: { projectId, department: dept, status: "approved", approvedById: empDbId, approvedAt: new Date() },
-      update: { status: "approved", approvedById: empDbId, approvedAt: new Date() },
-    });
-
-    // Check if ALL depts for this project are approved
+    // all parts approved → whole plan approved
     const allApprovals = await prisma.resourcePlanDeptApproval.findMany({ where: { projectId } });
     const allApproved = allApprovals.length > 0 && allApprovals.every((a) => a.status === "approved");
     if (allApproved) {
@@ -239,7 +206,7 @@ export async function PATCH(req: NextRequest) {
       await prisma.resourcePlanEmployeeMonthly.updateMany({ where: { projectId }, data: { planStatus: "approved" } });
       return NextResponse.json({ success: true, planStatus: "approved", allApproved: true });
     }
-    return NextResponse.json({ success: true, planStatus: "submitted", deptApproved: dept });
+    return NextResponse.json({ success: true, planStatus: "submitted", deptApproved: department });
   }
 
   // Admin/MD full override approve

@@ -22,6 +22,8 @@ export const authOptions: NextAuthOptions = {
         });
 
         if (!employee) return null;
+        // heads of org units get the Approve Plan page for their units (any role)
+        const headedUnits = await prisma.orgUnit.count({ where: { headId: employee.id } });
 
         return {
           id: employee.id,
@@ -32,6 +34,7 @@ export const authOptions: NextAuthOptions = {
           department: employee.department,
           position: employee.position,
           managedDept: employee.managedDept,
+          isUnitHead: headedUnits > 0,
         };
       },
     }),
@@ -45,6 +48,7 @@ export const authOptions: NextAuthOptions = {
         token.department = (user as any).department;
         token.position = (user as any).position;
         token.managedDept = (user as any).managedDept;
+        token.isUnitHead = (user as any).isUnitHead;
       }
       return token;
     },
@@ -56,6 +60,7 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).department = token.department;
         (session.user as any).position = token.position;
         (session.user as any).managedDept = token.managedDept;
+        (session.user as any).isUnitHead = token.isUnitHead;
       }
       return session;
     },

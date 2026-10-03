@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role, isActive, managedDept, startDate } = body;
+  const { employeeId, name, department, position, role, isActive, managedDept, startDate, orgUnitId } = body;
 
   if (!employeeId || !name || !department || !position) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -34,6 +34,12 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.employee.findUnique({ where: { employeeId: employeeId.trim().toUpperCase() } });
   if (existing) return NextResponse.json({ error: "Employee ID already exists" }, { status: 409 });
+
+  if (orgUnitId) {
+    const unit = await prisma.orgUnit.findUnique({ where: { id: orgUnitId }, select: { department: true } });
+    if (!unit || unit.department !== String(department).trim())
+      return NextResponse.json({ error: "หน่วยต้องอยู่ในแผนกเดียวกับพนักงาน" }, { status: 400 });
+  }
 
   const employee = await prisma.employee.create({
     data: {
@@ -45,6 +51,7 @@ export async function POST(req: NextRequest) {
       isActive: isActive !== false,
       ...(managedDept && { managedDept: managedDept.trim() }),
       startDate: parseDateOnly(startDate),
+      orgUnitId: orgUnitId || null,
     },
   });
 

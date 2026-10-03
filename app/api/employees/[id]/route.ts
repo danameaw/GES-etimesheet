@@ -14,7 +14,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept, startDate } = body;
+  const { employeeId, name, department, position, role: empRole, isActive, level, managedDept, startDate, orgUnitId } = body;
 
   // PD can ONLY change level
   if (role === "ges_management") {
@@ -33,9 +33,27 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (dup) return NextResponse.json({ error: "Employee ID already exists" }, { status: 409 });
   }
 
+  // Unit must belong to the employee's (new) department; changing department clears a unit from the old one
+  let unitUpdate: { orgUnitId: string | null } | undefined;
+  if (orgUnitId !== undefined || department) {
+    const current = await prisma.employee.findUnique({ where: { id: params.id }, select: { department: true, orgUnitId: true } });
+    const dept = department ? String(department).trim() : current?.department;
+    const wantedUnit = orgUnitId !== undefined ? (orgUnitId || null) : current?.orgUnitId ?? null;
+    if (wantedUnit) {
+      const unit = await prisma.orgUnit.findUnique({ where: { id: wantedUnit }, select: { department: true } });
+      if (!unit) return NextResponse.json({ error: "ไม่พบหน่วย" }, { status: 400 });
+      unitUpdate = { orgUnitId: unit.department === dept ? wantedUnit : null };
+      if (orgUnitId && unit.department !== dept)
+        return NextResponse.json({ error: `หน่วยนี้อยู่แผนก ${unit.department}` }, { status: 400 });
+    } else {
+      unitUpdate = { orgUnitId: null };
+    }
+  }
+
   const employee = await prisma.employee.update({
     where: { id: params.id },
     data: {
+      ...unitUpdate,
       ...(employeeId && { employeeId: employeeId.trim().toUpperCase() }),
       ...(name && { name: name.trim() }),
       ...(department && { department: department.trim() }),

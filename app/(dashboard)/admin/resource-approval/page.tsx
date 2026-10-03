@@ -19,15 +19,19 @@ interface ProjectPlan {
 }
 interface EmpData {
   employee: { id: string; employeeId: string; name: string; department: string; position: string };
+  unitPath?: string;  // "Procurement > Logistic Team" (inside the department), "" = directly under the department
+  approver?: { department: string; unitId: string; label: string };
   monthStats: Record<number, MonthStats>;
   projects: ProjectPlan[];
 }
 interface DeptData     { name: string; employees: EmpData[]; }
-interface DeptApprovalEntry { department: string; status: string; }
+// one approval part of a project plan: a department ("" unit) or a unit inside it
+interface DeptApprovalEntry { department: string; unitId: string; label: string; status: string; canApprove: boolean; }
 interface WorkloadData {
   year: number; months: MonthMeta[]; departments: DeptData[];
   deptApprovalMap: Record<string, DeptApprovalEntry[]>;
   ohAllowancePct?: number;
+  canManagePlans?: boolean; // GES Management / admin / md: whole-plan approve & revision decisions
 }
 
 export default function ResourceApprovalPage() {
@@ -35,7 +39,8 @@ export default function ResourceApprovalPage() {
   const router   = useRouter();
   const role        = (session?.user as any)?.role;
   const managedDept = (session?.user as any)?.managedDept as string | undefined;
-  const canAccess   = ["ges_management", "ges_pd", "admin", "md"].includes(role);
+  const isUnitHead  = !!(session?.user as any)?.isUnitHead;
+  const canAccess   = ["ges_management", "ges_pd", "admin", "md"].includes(role) || isUnitHead;
   const isMD        = role === "md";
 
   const [year, setYear]   = useState(new Date().getFullYear());
@@ -56,12 +61,13 @@ export default function ResourceApprovalPage() {
 
   useEffect(() => { if (canAccess) load(); }, [load, canAccess]);
 
-  async function planAction(projectId: string, action: string) {
-    setActing(`${projectId}:${action}`);
-    await fetch("/api/resource-plan-monthly", {
+  async function planAction(projectId: string, action: string, extra: Record<string, string> = {}) {
+    setActing(`${projectId}:${action}${extra.unitId !== undefined ? `:${extra.unitId}` : ""}`);
+    const res = await fetch("/api/resource-plan-monthly", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, projectId }),
+      body: JSON.stringify({ action, projectId, ...extra }),
     });
+    if (!res.ok) alert((await res.json().catch(() => ({}))).error || "ทำรายการไม่สำเร็จ");
     setActing(null);
     load();
   }
@@ -176,6 +182,7 @@ export default function ResourceApprovalPage() {
               dept={dept}
               months={data.months}
               canApprove={!isMD}
+              canManage={!!data.canManagePlans}
               acting={acting}
               approveProject={approveProject}
               planAction={planAction}
@@ -189,11 +196,11 @@ export default function ResourceApprovalPage() {
 }
 
 // ── Department Table (Workload view + Approve Plan view) ─────────────────────
-function DeptTable({ dept, months, canApprove, acting, approveProject, planAction, deptApprovalMap }: {
+function DeptTable({ dept, months, canApprove, canManage, acting, approveProject, planAction, deptApprovalMap }: {
   dept: DeptData; months: MonthMeta[];
-  canApprove: boolean; acting: string | null;
+  canApprove: boolean; canManage: boolean; acting: string | null;
   approveProject: (id: string) => void;
-  planAction: (id: string, action: string) => void;
+  planAction: (id: string, action: string, extra?: Record<string, string>) => void;
   deptApprovalMap: Record<string, DeptApprovalEntry[]>;
 }) {
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
@@ -232,38 +239,45 @@ function DeptTable({ dept, months, canApprove, acting, approveProject, planActio
                   <span className="text-xs text-gray-700 max-w-[150px] truncate">{proj.projectName}</span>
                   <PlanStatusBadge status={proj.planStatus} />
                   {proj.planStatus === "submitted" && (() => {
-                    const allDeptApprovals = deptApprovalMap[proj.projectId] || [];
-                    const myDeptApproval = allDeptApprovals.find((da) => da.department === dept.name);
-                    const otherApprovals = allDeptApprovals.filter((da) => da.department !== dept.name);
-                    const alreadyApproved = myDeptApproval?.status === "approved";
+                    // approval parts: this department's parts first (unit by unit), then other departments
+                    const parts = deptApprovalMap[proj.projectId] || [];
+                    const mine   = parts.filter((da) => da.department === dept.name);
+                    const others = parts.filter((da) => da.department !== dept.name);
+                    const pendingMine = mine.filter((da) => da.status !== "approved" && da.canApprove);
+                    const chip = (da: DeptApprovalEntry) => (
+                      <span key={`${da.department}|${da.unitId}`} className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                        da.status === "approved"
+                          ? "bg-green-50 border-green-200 text-green-700"
+                          : "bg-amber-50 border-amber-200 text-amber-700"
+                      }`}>
+                        {da.status === "approved" ? "✓" : "⏳"} {da.label}
+                      </span>
+                    );
                     return (
                       <div className="flex flex-col gap-1.5">
-                        {otherApprovals.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {otherApprovals.map((da) => (
-                              <span key={da.department} className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
-                                da.status === "approved"
-                                  ? "bg-green-50 border-green-200 text-green-700"
-                                  : "bg-amber-50 border-amber-200 text-amber-700"
-                              }`}>
-                                {da.status === "approved" ? "✓" : "⏳"} {da.department}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {alreadyApproved
-                          ? <span className="text-xs text-green-600 font-semibold">✓ {dept.name} อนุมัติแล้ว</span>
-                          : <button
-                              onClick={() => planAction(proj.projectId, "dept_approve")}
-                              disabled={acting === `${proj.projectId}:dept_approve`}
+                        <div className="flex flex-wrap gap-1">
+                          {mine.map((da) => da.status !== "approved" && da.canApprove ? (
+                            <button key={`${da.department}|${da.unitId}`}
+                              onClick={() => planAction(proj.projectId, "dept_approve", { department: da.department, unitId: da.unitId })}
+                              disabled={!!acting}
                               className="text-xs bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:opacity-50 font-medium whitespace-nowrap">
-                              {acting === `${proj.projectId}:dept_approve` ? "…" : `✓ Approve (${dept.name})`}
+                              {acting === `${proj.projectId}:dept_approve:${da.unitId}` ? "…" : `✓ Approve ${da.label}`}
                             </button>
-                        }
+                          ) : chip(da))}
+                          {canManage && pendingMine.length > 1 && (
+                            <button
+                              onClick={() => planAction(proj.projectId, "dept_approve", { department: dept.name })}
+                              disabled={!!acting}
+                              className="text-xs border border-green-600 text-green-700 px-3 py-1 rounded-md hover:bg-green-50 disabled:opacity-50 font-medium whitespace-nowrap">
+                              ✓ อนุมัติทั้งแผนก ({pendingMine.length})
+                            </button>
+                          )}
+                        </div>
+                        {others.length > 0 && <div className="flex flex-wrap gap-1">{others.map(chip)}</div>}
                       </div>
                     );
                   })()}
-                  {proj.planStatus === "revision_requested" && (
+                  {canManage && proj.planStatus === "revision_requested" && (
                     <>
                       <button
                         onClick={() => planAction(proj.projectId, "approve_revision")}
@@ -321,6 +335,7 @@ function DeptTable({ dept, months, canApprove, acting, approveProject, planActio
                         <div>
                           <div className="font-semibold text-gray-800">{emp.employee.name}</div>
                           <div className="text-xs text-gray-400">{emp.employee.employeeId} · {emp.employee.position}</div>
+                          {emp.unitPath && <div className="text-[11px] text-indigo-600">{emp.unitPath}</div>}
                         </div>
                       </div>
                     </td>
@@ -377,7 +392,7 @@ function DeptTable({ dept, months, canApprove, acting, approveProject, planActio
                         <td className="px-3 py-2 text-center font-semibold text-blue-900">{projTotal > 0 ? `${projTotal}h` : "–"}</td>
                         {canApprove && (
                           <td className="px-3 py-2 text-center">
-                            {isSubmitted && (
+                            {canManage && isSubmitted && (
                               <button onClick={() => approveProject(proj.projectId)} disabled={acting === proj.projectId}
                                 className="text-xs bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 disabled:opacity-50 whitespace-nowrap">
                                 {acting === proj.projectId ? "…" : "✓ Approve"}

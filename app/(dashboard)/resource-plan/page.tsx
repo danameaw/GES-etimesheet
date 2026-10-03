@@ -66,7 +66,7 @@ export default function ResourcePlanPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Dept approval status
-  const [deptApprovals, setDeptApprovals] = useState<{ department: string; status: string }[]>([]);
+  const [deptApprovals, setDeptApprovals] = useState<{ department: string; unitId?: string; label?: string; status: string }[]>([]);
 
   // Standard hours per month (after holidays) — key: "year-month"
   const [stdHours, setStdHours] = useState<Record<string, number>>({});
@@ -362,12 +362,12 @@ export default function ResourcePlanPage() {
                     {deptApprovals.length > 0 && planStatus !== "draft" && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {deptApprovals.map((da) => (
-                          <span key={da.department} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium border ${
+                          <span key={`${da.department}|${da.unitId ?? ""}`} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium border ${
                             da.status === "approved"
                               ? "bg-green-50 border-green-200 text-green-700"
                               : "bg-amber-50 border-amber-200 text-amber-700"
                           }`}>
-                            {da.status === "approved" ? "✓" : "⏳"} {da.department}
+                            {da.status === "approved" ? "✓" : "⏳"} {da.label ?? da.department}
                           </span>
                         ))}
                       </div>
