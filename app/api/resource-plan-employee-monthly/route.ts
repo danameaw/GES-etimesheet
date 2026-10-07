@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { hasRole, isPD } from "@/lib/roles";
 import { entryMonthHours } from "@/lib/capacity";
 
 export async function GET(req: NextRequest) {
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pd", "admin", "md"].includes(role))
+  if (!hasRole(role, "pd", "admin", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pd" && proj.pdId !== empDbId && proj.managerId !== empDbId)
+  if (isPD(role) && proj.pdId !== empDbId && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")
@@ -103,7 +104,7 @@ export async function DELETE(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pd", "admin", "md"].includes(role))
+  if (!hasRole(role, "pd", "admin", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -117,7 +118,7 @@ export async function DELETE(req: NextRequest) {
   const proj = await prisma.project.findUnique({ where: { id: projectId } });
   if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (role === "pd" && proj.pdId !== empDbId && proj.managerId !== empDbId)
+  if (isPD(role) && proj.pdId !== empDbId && proj.managerId !== empDbId)
     return NextResponse.json({ error: "Not your project" }, { status: 403 });
 
   if (role !== "admin" && proj.planStatus !== "draft")

@@ -88,7 +88,7 @@ function ProjectsTab() {
     const empData  = await empRes.json();
     setProjects(projData.projects || []);
     // All employees with PM/PD/admin roles are selectable for both manager and pd fields
-    setManagers((empData.employees || []).filter((e: any) => ["pd","admin","md"].includes(e.role)));
+    setManagers((empData.employees || []).filter((e: any) => ["pd","ges_pd","admin","md"].includes(e.role)));
     setLoading(false);
   }, []);
 

@@ -19,7 +19,7 @@ export async function GET() {
 
   // รายชื่อพนักงานที่เลือกเป็น PD/PM ได้ (อ้างอิงใน sheet คู่มือ)
   const refEmployees = await prisma.employee.findMany({
-    where: { isActive: true, role: { in: ["pd", "admin", "md"] } },
+    where: { isActive: true, role: { in: ["pd", "ges_pd", "admin", "md"] } },
     select: { employeeId: true, name: true, role: true, department: true },
     orderBy: { employeeId: "asc" },
   });

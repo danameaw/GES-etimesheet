@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { hasRole, isPD } from "@/lib/roles";
 import * as XLSX from "xlsx";
 
 const MONTH_MAP: Record<string, number> = {
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pd", "admin", "md"].includes(role))
+  if (!hasRole(role, "pd", "admin", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Parse multipart form
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing file or projectId" }, { status: 400 });
 
   // Verify PM owns the project (skip for admin)
-  if (role === "pd") {
+  if (isPD(role)) {
     const proj = await prisma.project.findFirst({ where: { id: projectId, OR: [{ pdId: empDbId }, { managerId: empDbId }] } });
     if (!proj) return NextResponse.json({ error: "Not your project" }, { status: 403 });
   }

@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { hasRole, isPD } from "@/lib/roles";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const role = (session.user as any).role;
-  if (!["admin", "pd", "md"].includes(role))
+  if (!hasRole(role, "admin", "pd", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const ts = await prisma.timesheet.findUnique({
@@ -33,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const role = (session.user as any).role;
-  if (!["admin", "pd", "md"].includes(role)) {
+  if (!hasRole(role, "admin", "pd", "md")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -49,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     const empDbId = (session.user as any).id;
 
-    if (role === "pd") {
+    if (isPD(role)) {
       // PD: ต้องมี entry ที่อยู่ใน project ของตัวเอง (pdId หรือ managerId)
       const ownsAny = ts.entries.some(
         (e) => e.project.pdId === empDbId || e.project.managerId === empDbId
@@ -83,7 +84,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (action === "approve") {
     // เฉพาะ PD และ MD เท่านั้น — Admin ดูได้แต่อนุมัติไม่ได้
-    if (role !== "pd" && role !== "md")
+    if (!isPD(role) && role !== "md")
       return NextResponse.json({ error: "เฉพาะ PD/MD เท่านั้นที่อนุมัติได้" }, { status: 403 });
     await prisma.timesheet.update({ where: { id: params.id }, data: { status: "approved" } });
     await prisma.auditLog.create({ data: { employeeId: (session.user as any).id, action: "APPROVE_TIMESHEET", detail: `Approved timesheet ${params.id}` } });
@@ -92,7 +93,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (action === "reject") {
     // เฉพาะ PD และ MD เท่านั้น
-    if (role !== "pd" && role !== "md")
+    if (!isPD(role) && role !== "md")
       return NextResponse.json({ error: "เฉพาะ PD/MD เท่านั้นที่ reject ได้" }, { status: 403 });
     await prisma.timesheet.update({
       where: { id: params.id },

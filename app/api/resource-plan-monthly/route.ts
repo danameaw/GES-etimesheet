@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { hasRole, isPD } from "@/lib/roles";
 import { entryMonthHours } from "@/lib/capacity";
 import { loadUnitIndex, canApproveKey, mgmtScope } from "@/lib/org-units";
 import { syncPlanApprovals, approvalsWithLabels, currentApprovalKeys } from "@/lib/plan-approvals";
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
   // ges_management → same as pd
   // admin / md     → all active projects (forApproval: non-draft only; allProjects: all)
   let projectWhere: any = { isActive: true };
-  if (role === "pd" || role === "ges_pd" || role === "ges_management") {
+  if (isPD(role) || role === "ges_management") {
     projectWhere = forApproval
       ? { isActive: true, planStatus: { not: "draft" } }
       : { isActive: true, OR: [{ pdId: empDbId }, { managerId: empDbId }] }; // PD or PM of the project
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
   const role    = (session.user as any).role;
   const empDbId = (session.user as any).id;
 
-  if (!["pd", "admin", "md"].includes(role))
+  if (!hasRole(role, "pd", "admin", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
@@ -121,7 +122,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
 
   // Verify plan is editable (draft only)
-  if (role === "pd") {
+  if (isPD(role)) {
     const proj = await prisma.project.findFirst({ where: { id: projectId } });
     if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     if (proj.planStatus !== "draft")
@@ -170,7 +171,7 @@ export async function PATCH(req: NextRequest) {
 
   // PD requests revision of submitted/approved plan
   if (action === "revision_request") {
-    if (!["pd", "admin", "md"].includes(role))
+    if (!hasRole(role, "pd", "admin", "md"))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "revision_requested" } });
@@ -249,7 +250,7 @@ export async function PATCH(req: NextRequest) {
 
   // PD cancels own revision request (revision_requested → submitted)
   if (action === "cancel_revision") {
-    if (!["pd", "admin", "md"].includes(role))
+    if (!hasRole(role, "pd", "admin", "md"))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     await prisma.project.update({ where: { id: projectId }, data: { planStatus: "submitted" } });
@@ -290,7 +291,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["pd", "admin", "md"].includes((session.user as any).role))
+  if (!hasRole((session.user as any).role, "pd", "admin", "md"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
