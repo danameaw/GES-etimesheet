@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { useRef } from "react";
 import { OH_CATEGORIES, TASK_CATEGORIES } from "@/lib/task-constants";
+import BulkPlanTemplate from "@/components/BulkPlanTemplate";
 
 // ──────────── Types ────────────
 interface Project {
@@ -52,7 +53,7 @@ export default function ManagePage() {
         ))}
       </div>
 
-      {tab === 0 && <ProjectsTab />}
+      {tab === 0 && <><BulkPlanTemplate /><ProjectsTab /></>}
       {tab === 1 && <TasksTab />}
       {tab === 2 && <HolidaysTab />}
     </div>
