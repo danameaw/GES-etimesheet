@@ -69,8 +69,8 @@ export type ParsedPlan = { userId: string; year: number; month: number; hrs: num
 
 /**
  * อ่านแถวของ sheet (array of arrays) → แผนรายคนรายเดือน
- * ต้องมีแถว header ที่คอลัมน์แรกเป็น "User ID"; คอลัมน์เดือนเริ่มที่คอลัมน์ที่ 4
- * แถวที่ไม่มี User ID (หัวกลุ่ม / subtotal / total) ถูกข้าม
+ * ต้องมีแถว header ที่คอลัมน์แรกเป็น "User ID"; คอลัมน์เดือน ("Jun 2026") เริ่มที่คอลัมน์ที่ 4
+ * แถวที่ไม่มี User ID (แถว Actual / หัวกลุ่ม / รวม) และคอลัมน์ที่ไม่ใช่เดือน (Plan/Actual, Total) ถูกข้าม
  */
 export function parsePlanRows(rows: any[][]): { plans: ParsedPlan[]; error?: string } {
   const headerIdx = rows.findIndex((r) => String(r[0] ?? "").trim().toLowerCase() === "user id");
@@ -175,7 +175,8 @@ export async function monthlyActuals(projectIds: string[], from: YM, to: YM) {
 
 // ── Writer ────────────────────────────────────────────────────────────────────
 
-export type SheetEmp = { userId: string; name: string; department: string; unit: string; actual: number[]; plan: number[] };
+/** actual[i] = null → เดือนที่ยังไม่มี Actual (อนาคต) */
+export type SheetEmp = { userId: string; name: string; department: string; unit: string; plan: number[]; actual: (number | null)[] };
 export type SheetGroup = { label: string; emps: SheetEmp[] };
 
 export type ProjectSheet = {
@@ -186,8 +187,7 @@ export type ProjectSheet = {
   planStatus: string;
   endDate: Date | null;
   warning: string;          // ข้อความเตือนบน sheet ("" = ไม่มี)
-  actualMonths: MonthCol[];
-  planMonths: MonthCol[];
+  months: MonthCol[];       // แต่ละคนมี 2 แถว: Plan / Actual
   groups: SheetGroup[];
 };
 
@@ -196,6 +196,7 @@ const INPUT_FILL = "FFFFFBEB";  // amber-50 — ช่องที่ให้�
 const ACTUAL_FILL = "FFF1F5F9"; // slate-100 — ข้อมูลจริง ดูอย่างเดียว
 
 const fmtDate = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
+const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
 
 function safeSheetName(name: string, used: Set<string>) {
   let base = name.replace(/[\[\]:*?/\\]/g, "-").slice(0, 31) || "Project";
@@ -206,9 +207,9 @@ function safeSheetName(name: string, used: Set<string>) {
 
 export function writeProjectSheet(wb: ExcelJS.Workbook, p: ProjectSheet, usedNames: Set<string>) {
   const ws = wb.addWorksheet(safeSheetName(p.projectNumber, usedNames));
-  const nA = p.actualMonths.length, nP = p.planMonths.length;
-  const firstActual = 5, totalActualCol = firstActual + nA, firstPlan = totalActualCol + 1, totalPlanCol = firstPlan + nP;
-  const colCount = totalPlanCol;
+  const TYPE = 5, FIRST = 6;                         // คอลัมน์ Plan/Actual, คอลัมน์แรกของเดือน
+  const totalCol = FIRST + p.months.length;
+  const colCount = totalCol;
   const col = (c: number) => ws.getColumn(c).letter;
 
   addTitleBand(ws, `${p.projectNumber} : ${p.projectName}`,
@@ -218,103 +219,128 @@ export function writeProjectSheet(wb: ExcelJS.Workbook, p: ProjectSheet, usedNam
   ws.getCell(3, 1).font = ws.getCell(3, 2).font = { bold: true, size: 10, color: { argb: COLORS.textMuted } };
   ws.getCell(4, 1).value = p.warning
     ? `⚠ ${p.warning}`
-    : "กรอกชั่วโมงแผนในช่องสีเหลือง (ใส่ 0–1.5 = จำนวน MM, ระบบแปลง 1 MM = 176 ชม.) · เพิ่มคนได้ที่แถวว่างด้านล่าง โดยใส่ User ID";
+    : "แต่ละคนมี 2 แถว: Plan (สีเหลือง) ให้กรอกชั่วโมง/เดือน · Actual (สีเทา) = ชั่วโมงจริงจาก Timesheet · ใส่ 0–1.5 = จำนวน MM (1 MM = 176 ชม.)";
   ws.getCell(4, 1).font = { size: 10, italic: !p.warning, bold: !!p.warning, color: { argb: p.warning ? COLORS.danger : COLORS.textMuted } };
 
   const HEADER = 6;
-  ws.getRow(HEADER).values = [
-    "User ID", "ชื่อ-นามสกุล", "แผนก", "หน่วย",
-    ...p.actualMonths.map((m) => `Actual ${m.label}`), "Total Actual",
-    ...p.planMonths.map((m) => m.label), "Total Plan",
-  ];
+  ws.getRow(HEADER).values = ["User ID", "ชื่อ-นามสกุล", "แผนก", "หน่วย", "", ...p.months.map((m) => m.label), "Total"];
   styleHeaderRow(ws, HEADER, colCount);
-  for (let c = firstActual; c <= totalActualCol; c++) ws.getCell(HEADER, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.textMuted } };
 
-  const sumCell = (r: number, from: number, to: number, result: number) =>
-    to >= from ? { formula: `SUM(${col(from)}${r}:${col(to)}${r})`, result } : result;
+  // ค่าตัวเลขของ cell (สูตร → ผลลัพธ์ที่ cache ไว้; ExcelJS ไม่เก็บ result ที่เป็น 0)
+  const num = (r: number, c: number) => {
+    const v = ws.getCell(r, c).value as any;
+    return Number((v !== null && typeof v === "object" ? v.result : v) ?? 0) || 0;
+  };
+  const rowTotal = (r: number) => {
+    let result = 0;
+    for (let c = FIRST; c < totalCol; c++) result += num(r, c);
+    ws.getCell(r, totalCol).value = p.months.length ? { formula: `SUM(${col(FIRST)}${r}:${col(totalCol - 1)}${r})`, result } : 0;
+  };
 
-  const writeEmpRow = (r: number, e: SheetEmp | null) => {
-    const row = ws.getRow(r);
-    row.values = e
-      ? [e.userId, e.name, e.department, e.unit, ...e.actual, null, ...e.plan, null]
-      : ["", "", "", "", ...p.actualMonths.map(() => null), null, ...p.planMonths.map(() => null), null];
-    const tA = e ? e.actual.reduce((s, v) => s + v, 0) : 0, tP = e ? e.plan.reduce((s, v) => s + v, 0) : 0;
-    row.getCell(totalActualCol).value = sumCell(r, firstActual, totalActualCol - 1, tA);
-    row.getCell(totalPlanCol).value = sumCell(r, firstPlan, totalPlanCol - 1, tP);
-    for (let c = 1; c <= colCount; c++) {
-      const cell = row.getCell(c);
-      cell.border = thinBorder();
-      cell.font = { size: 10, color: { argb: COLORS.textDark } };
-      if (c >= firstActual && c <= totalActualCol) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ACTUAL_FILL } };
-      if (c >= firstPlan && c < totalPlanCol) {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+  // 1 คน = 2 แถว: Plan (กรอก) / Actual (ดูอย่างเดียว) · User ID อยู่แถว Plan เท่านั้น (แถว Actual ถูกข้ามตอน import)
+  const writePerson = (r: number, e: SheetEmp | null) => {
+    if (e) ws.getRow(r).values = [e.userId, e.name, e.department, e.unit];
+    ws.getCell(r, TYPE).value = "Plan";
+    ws.getCell(r + 1, TYPE).value = "Actual";
+    p.months.forEach((_, i) => {
+      ws.getCell(r, FIRST + i).value = e ? e.plan[i] : null;
+      ws.getCell(r + 1, FIRST + i).value = e ? e.actual[i] : null;
+    });
+    rowTotal(r);
+    rowTotal(r + 1);
+    for (const rr of [r, r + 1]) {
+      const isPlan = rr === r;
+      for (let c = 1; c <= colCount; c++) {
+        const cell = ws.getCell(rr, c);
+        cell.border = thinBorder();
+        cell.font = { size: 10, bold: c === totalCol, color: { argb: c === TYPE && !isPlan ? COLORS.textMuted : COLORS.textDark } };
+        if (c < TYPE) continue;
+        if (c >= FIRST) cell.numFmt = "#,##0.##";
+        if (!isPlan) { cell.fill = solid(ACTUAL_FILL); continue; }
+        if (c < FIRST || c === totalCol) continue;
+        cell.fill = solid(INPUT_FILL);
         cell.dataValidation = { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], allowBlank: true,
           showErrorMessage: true, errorTitle: "ชั่วโมงไม่ถูกต้อง", error: "กรอกตัวเลขตั้งแต่ 0 ขึ้นไป" };
       }
-      if (c >= firstActual) cell.numFmt = "#,##0.##";
     }
-    if (!e) row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+    if (!e) ws.getCell(r, 1).fill = solid(INPUT_FILL);
+    else for (let c = 2; c < TYPE; c++) ws.mergeCells(r, c, r + 1, c);  // ชื่อ/แผนก/หน่วย คลุม 2 แถว
+    ws.getCell(r, 1).alignment = { vertical: "middle" };
+    for (let c = 2; c < TYPE; c++) ws.getCell(r, c).alignment = { vertical: "middle", wrapText: c === 4 };
   };
 
+  // รวม Plan / รวม Actual ของช่วงแถว (SUMIF ตามคอลัมน์ Plan/Actual)
   const subtotalRows: number[] = [];
   const writeSubtotal = (r: number, label: string, from: number, to: number) => {
-    const row = ws.getRow(r);
-    row.getCell(2).value = label;
-    for (let c = firstActual; c <= colCount; c++) {
-      let result = 0;
-      for (let i = from; i <= to; i++) result += Number((ws.getCell(i, c).value as any)?.result ?? ws.getCell(i, c).value ?? 0);
-      row.getCell(c).value = { formula: `SUM(${col(c)}${from}:${col(c)}${to})`, result };
-      row.getCell(c).numFmt = "#,##0.##";
-    }
-    styleSubtotalRow(ws, r, colCount);
-    subtotalRows.push(r);
+    (["Plan", "Actual"] as const).forEach((kind, k) => {
+      const rr = r + k;
+      ws.getCell(rr, 2).value = label;
+      ws.getCell(rr, TYPE).value = kind;
+      for (let c = FIRST; c <= colCount; c++) {
+        let result = 0;
+        for (let i = from; i <= to; i++) if (ws.getCell(i, TYPE).value === kind) result += num(i, c);
+        const L = col(TYPE);
+        ws.getCell(rr, c).value = to >= from ? { formula: `SUMIF($${L}$${from}:$${L}$${to},"${kind}",${col(c)}${from}:${col(c)}${to})`, result } : 0;
+        ws.getCell(rr, c).numFmt = "#,##0.##";
+      }
+      styleSubtotalRow(ws, rr, colCount);
+      subtotalRows.push(rr);
+    });
+    ws.mergeCells(r, 2, r + 1, 4);
+    ws.getCell(r, 2).alignment = { vertical: "middle" };
   };
 
   let r = HEADER + 1;
-  const groups = [...p.groups, { label: "เพิ่มพนักงาน (ถ้ามี) — ใส่ User ID", emps: [] as SheetEmp[] }];
+  const groups = [...p.groups, { label: "เพิ่มพนักงาน (ถ้ามี) — ใส่ User ID ในแถว Plan", emps: [] as SheetEmp[] }];
   groups.forEach((g, gi) => {
     const isBlank = gi === groups.length - 1;
     ws.getCell(r, 2).value = isBlank ? g.label : `▸ ${g.label}`;
     styleGroupRow(ws, r, colCount);
     r++;
     const from = r;
-    if (isBlank) for (let i = 0; i < BLANK_ROWS; i++) writeEmpRow(r++, null);
-    else for (const e of g.emps) writeEmpRow(r++, e);
+    const people: (SheetEmp | null)[] = isBlank ? Array(BLANK_ROWS).fill(null) : g.emps;
+    for (const e of people) { writePerson(r, e); r += 2; }
     writeSubtotal(r, isBlank ? "รวม (คนที่เพิ่ม)" : `รวม ${g.label}`, from, r - 1);
-    r++;
+    r += 2;
   });
 
-  // grand total = ผลรวมของ subtotal ทุกกลุ่ม
+  // grand total = ผลรวมของ subtotal ทุกกลุ่ม แยก Plan / Actual
   r++;
-  const totalRow = ws.getRow(r);
-  totalRow.getCell(2).value = "TOTAL";
-  for (let c = firstActual; c <= colCount; c++) {
-    const result = subtotalRows.reduce((s, sr) => s + Number((ws.getCell(sr, c).value as any)?.result ?? 0), 0);
-    totalRow.getCell(c).value = { formula: subtotalRows.map((sr) => `${col(c)}${sr}`).join("+"), result };
-    totalRow.getCell(c).numFmt = "#,##0.##";
-  }
-  styleSubtotalRow(ws, r, colCount);
-  for (let c = 1; c <= colCount; c++) totalRow.getCell(c).font = { bold: true, size: 11, color: { argb: COLORS.primary } };
+  (["Plan", "Actual"] as const).forEach((kind, k) => {
+    const rr = r + k;
+    const rows = subtotalRows.filter((sr) => ws.getCell(sr, TYPE).value === kind);
+    ws.getCell(rr, 2).value = "TOTAL";
+    ws.getCell(rr, TYPE).value = kind;
+    for (let c = FIRST; c <= colCount; c++) {
+      const result = rows.reduce((s, sr) => s + num(sr, c), 0);
+      ws.getCell(rr, c).value = { formula: rows.map((sr) => `${col(c)}${sr}`).join("+"), result };
+      ws.getCell(rr, c).numFmt = "#,##0.##";
+    }
+    styleSubtotalRow(ws, rr, colCount);
+    for (let c = 1; c <= colCount; c++) ws.getCell(rr, c).font = { bold: true, size: 11, color: { argb: COLORS.primary } };
+  });
+  ws.mergeCells(r, 2, r + 1, 4);
+  ws.getCell(r, 2).alignment = { vertical: "middle" };
 
-  ws.getColumn(1).width = 11; ws.getColumn(2).width = 30; ws.getColumn(3).width = 18; ws.getColumn(4).width = 22;
-  for (let c = firstActual; c <= colCount; c++) ws.getColumn(c).width = c === totalActualCol || c === totalPlanCol ? 12 : 10.5;
-  ws.views = [{ state: "frozen", xSplit: 2, ySplit: HEADER }];
+  ws.getColumn(1).width = 10; ws.getColumn(2).width = 28; ws.getColumn(3).width = 16; ws.getColumn(4).width = 20; ws.getColumn(TYPE).width = 8;
+  for (let c = FIRST; c <= colCount; c++) ws.getColumn(c).width = c === totalCol ? 11 : 9.5;
+  ws.views = [{ state: "frozen", xSplit: TYPE, ySplit: HEADER }];
 }
 
 export type ReadmeRow = { projectNumber: string; projectName: string; pdName: string; pmName: string;
   endDate: Date | null; people: number; actualHrs: number; planStatus: string; warning: string };
 
-export function writeReadmeSheet(wb: ExcelJS.Workbook, title: string, rows: ReadmeRow[], actual: MonthCol[], planFrom: MonthCol) {
+export function writeReadmeSheet(wb: ExcelJS.Workbook, title: string, rows: ReadmeRow[], actual: MonthCol[]) {
   const ws = wb.addWorksheet("README");
   const colCount = 9;
-  addTitleBand(ws, title, `Actual ${actual[0]?.label ?? "-"} – ${actual[actual.length - 1]?.label ?? "-"}   •   แผนตั้งแต่ ${planFrom.label} ถึงวันจบโครงการ`, colCount);
+  addTitleBand(ws, title, `Plan / Actual ตั้งแต่ ${actual[0]?.label ?? "-"} ถึงวันจบโครงการ   •   Actual มีถึง ${actual[actual.length - 1]?.label ?? "-"}`, colCount);
   const steps = [
     "วิธีใช้",
     "1) แต่ละ sheet = 1 โครงการ · พนักงานจัดกลุ่มตามแผนก/หน่วย ที่ Head of Dept จะเป็นผู้อนุมัติ",
-    "2) คอลัมน์สีเทา = ชั่วโมงจริง (Actual) จาก Timesheet ที่ส่งแล้ว ไว้ดูประกอบ ไม่ต้องแก้",
-    "3) คอลัมน์สีเหลือง = แผน (ชั่วโมง/เดือน) ให้ PD กรอก · ใส่ 0–1.5 จะถือเป็น MM (1 MM = 176 ชม.)",
-    "4) เพิ่มคนที่ยังไม่มีในรายชื่อได้ที่แถวว่างท้าย sheet (ใส่ User ID ก็พอ) · ห้ามแก้ชื่อ sheet แถว Project No. และแถว header",
-    "5) ส่งไฟล์กลับ → Admin นำเข้าที่หน้า Resource Plan → PD ตรวจและกด Submit ในระบบ → Head of Dept อนุมัติในหน้า Approve Plan",
+    "2) แต่ละคนมี 2 แถว: Plan (สีเหลือง) ให้ PD กรอกชั่วโมง/เดือน · Actual (สีเทา) = ชั่วโมงจริงจาก Timesheet ที่ส่งแล้ว ไม่ต้องแก้",
+    `3) Actual มีข้อมูลถึง ${actual[actual.length - 1]?.label ?? "-"} (เดือนที่มีคนกรอก Timesheet แล้ว) · Plan ใส่ 0–1.5 จะถือเป็น MM (1 MM = 176 ชม.)`,
+    "4) เพิ่มคนที่ยังไม่มีในรายชื่อได้ที่แถวว่างท้าย sheet (ใส่ User ID ก็พอ) · ห้ามแก้ชื่อ sheet แถว Project No. และแถวหัวตาราง",
+    "5) ส่งไฟล์กลับ → Admin นำเข้าที่หน้า Manage › โครงการ → PD ตรวจและกด Submit ในระบบ → Head of Dept อนุมัติในหน้า Approve Plan",
   ];
   steps.forEach((s, i) => {
     const c = ws.getCell(4 + i, 1);
@@ -359,6 +385,7 @@ export async function buildBulkPlanWorkbook(group: string, actualFrom: YM, actua
 
   const projectIds = projects.map((p) => p.id);
   const actualMonths = monthRange(actualFrom, actualTo);
+  const actualKeys = new Set(actualMonths.map((m) => ymKey(m.year, m.month)));
   const [actuals, existingPlans, idx] = await Promise.all([
     monthlyActuals(projectIds, actualFrom, actualTo),
     prisma.resourcePlanEmployeeMonthly.findMany({
@@ -396,7 +423,7 @@ export async function buildBulkPlanWorkbook(group: string, actualFrom: YM, actua
     }
     if (!p.pdId && !p.managerId) warnings.push("ยังไม่ได้กำหนด PD/PM — ไม่มีใครเห็นโครงการนี้ในหน้า Resource Plan (ตั้งได้ที่หน้า Manage)");
     if (p.planStatus !== "draft") warnings.push(`แผนสถานะ "${p.planStatus}" — import ทับไม่ได้จนกว่าแผนจะกลับเป็น draft`);
-    const planMonths = monthRange(planFrom, planTo);
+    const months = monthRange(actualFrom, planTo);  // Plan + Actual ทุกเดือน ตั้งแต่เดือนแรกที่มี Actual
 
     const projActual = actuals.get(p.id) ?? new Map<string, Map<string, number>>();
     const ids = new Set<string>(projActual.keys());
@@ -410,12 +437,15 @@ export async function buildBulkPlanWorkbook(group: string, actualFrom: YM, actua
       const label = approvalLabel(idx, approvalKeyFor(idx, e));
       const unitPath = e.orgUnitId ? idx.names(e.orgUnitId).join(" > ") : "";
       const a = projActual.get(id);
-      const actual = actualMonths.map((m) => Math.round((a?.get(ymKey(m.year, m.month)) ?? 0) * 100) / 100);
-      actualHrs += actual.reduce((s, v) => s + v, 0);
+      const actual = months.map((m) => {
+        const k = ymKey(m.year, m.month);
+        return actualKeys.has(k) ? Math.round((a?.get(k) ?? 0) * 100) / 100 : null;  // เดือนอนาคต = ว่าง
+      });
+      actualHrs += actual.reduce<number>((s, v) => s + (v ?? 0), 0);
       if (!groupMap.has(label)) groupMap.set(label, { label, emps: [] });
       groupMap.get(label)!.emps.push({
         userId: e.employeeId, name: e.name, department: e.department, unit: unitPath, actual,
-        plan: planMonths.map((m) => planOf.get(`${p.id}|${id}|${ymKey(m.year, m.month)}`) ?? 0),
+        plan: months.map((m) => planOf.get(`${p.id}|${id}|${ymKey(m.year, m.month)}`) ?? 0),
       });
     }
     const groups = Array.from(groupMap.values()).sort((a, b) => a.label.localeCompare(b.label));
@@ -423,12 +453,12 @@ export async function buildBulkPlanWorkbook(group: string, actualFrom: YM, actua
 
     const common = { projectNumber: p.projectNumber, projectName: p.projectName, pdName: p.pd?.name ?? "", pmName: p.manager?.name ?? "",
       planStatus: p.planStatus, endDate: p.endDate };
-    sheets.push({ ...common, warning: warnings.join(" · "), actualMonths, planMonths, groups });
+    sheets.push({ ...common, warning: warnings.join(" · "), months, groups });
     readme.push({ ...common, people: groups.reduce((s, g) => s + g.emps.length, 0), actualHrs, warning: warnings.join(" · ") });
   }
 
   const groupLabel = group === "all" ? "ทุกกลุ่ม" : PROJECT_GROUPS.find((g) => g.key === group)?.label ?? group;
-  writeReadmeSheet(wb, `Resource Plan Template — ${groupLabel} (${projects.length} โครงการ)`, readme, actualMonths, monthRange(planFrom, planFrom)[0]);
+  writeReadmeSheet(wb, `Resource Plan Template — ${groupLabel} (${projects.length} โครงการ)`, readme, actualMonths);
   const used = new Set<string>(["readme"]);
   for (const s of sheets) writeProjectSheet(wb, s, used);
 

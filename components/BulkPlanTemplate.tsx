@@ -40,7 +40,7 @@ export default function BulkPlanTemplate({ onImported }: { onImported?: () => vo
         <div>
           <h2 className="font-semibold text-gray-800 text-sm">📦 Template แผนหลายโครงการ (Admin)</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            1 sheet ต่อโครงการ · Actual มิ.ย.–ก.ย. 2026 · แผน ต.ค. 2026 ถึงวันจบโครงการ · นำเข้าเป็น draft ให้ PD ตรวจและ Submit
+            1 sheet ต่อโครงการ · แต่ละคนมีแถว Plan / Actual ตั้งแต่ มิ.ย. 2026 ถึงวันจบโครงการ (Actual จริงถึง ก.ย. 2026) · นำเข้าเป็น draft ให้ PD ตรวจและ Submit
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
