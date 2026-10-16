@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format, startOfWeek, addWeeks, subWeeks, addDays, addMonths, subMonths, startOfMonth, endOfMonth } from "date-fns";
 import PlanActualExportBtn from "@/components/PlanActualExportBtn";
+import { DEPARTMENTS } from "@/lib/departments";
 
 interface EmployeeRow {
   id: string; employeeId: string; name: string; department: string; position: string;
@@ -27,6 +28,7 @@ export default function AdminPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const [navMode, setNavMode] = useState<"week" | "month" | "range">("week");
+  const [exDept, setExDept] = useState(""); // By Department export: "" = every department
   const [currentWeek, setCurrentWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
   const [rangeFrom, setRangeFrom] = useState(() => format(startOfMonth(new Date()), "yyyy-MM-dd"));
@@ -417,7 +419,16 @@ export default function AdminPage() {
               <ExportBtn type="weekly"      {...p} label="📥 Detail" />
               <ExportBtn type="task"        {...p} label="🧩 By Task" />
               <ExportBtn type="project"     {...p} label="🗂 By Project" />
-              <ExportBtn type="department"  {...p} label="🏢 By Department" />
+              <span className="inline-flex items-center gap-1">
+                {role !== "ges_management" && (
+                  <select value={exDept} onChange={(e) => setExDept(e.target.value)} title="แผนกสำหรับรายงาน By Department"
+                    className="border border-gray-200 rounded-lg text-xs px-2 py-1.5 bg-white">
+                    <option value="">ทุกแผนก</option>
+                    {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                )}
+                <ExportBtn type="department"  {...p} dept={exDept || undefined} label="🏢 By Department" />
+              </span>
               <ExportBtn type="employee"    {...p} label="👤 By Employee" />
               <ExportBtn type="utilization" {...p} label="📊 Utilization" />
               <ExportBtn type="missing"     {...p} label="⚠ Missing" />
@@ -1053,7 +1064,7 @@ function SummaryCard({ label, value, color, icon, onClick, active }: {
   );
 }
 
-function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, label, year, primary, className }: { type: string; week: Date; month?: Date; from?: string; to?: string; projectIds?: string; forceDisabled?: boolean; label: string; year?: number; primary?: boolean; className?: string }) {
+function ExportBtn({ type, week, month, from, to, projectIds, dept, forceDisabled, label, year, primary, className }: { type: string; week: Date; month?: Date; from?: string; to?: string; projectIds?: string; dept?: string; forceDisabled?: boolean; label: string; year?: number; primary?: boolean; className?: string }) {
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const disabled = forceDisabled || !!(from !== undefined && (!from || !to));
   const projQs = projectIds ? `&projectIds=${projectIds}` : "";
@@ -1064,6 +1075,7 @@ function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, lab
     : month
     ? `/api/export?type=${type}&month=${fmt(startOfMonth(month))}`
     : `/api/export?type=${type}&week=${fmt(week)}`;
+  const deptQs = dept ? `&dept=${encodeURIComponent(dept)}` : "";
   const base = primary ? "ges-btn-primary" : "ges-btn-secondary";
   const size = className ?? "text-xs px-3 py-1.5";
   const cls = `${base} ${size} whitespace-nowrap`;
@@ -1071,7 +1083,7 @@ function ExportBtn({ type, week, month, from, to, projectIds, forceDisabled, lab
     return <span className={`${cls} opacity-40 cursor-not-allowed`}>{label}</span>;
   }
   return (
-    <a href={href} className={cls}>
+    <a href={href + deptQs} className={cls}>
       {label}
     </a>
   );

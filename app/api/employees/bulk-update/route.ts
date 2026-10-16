@@ -4,11 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { parseDateOnly } from "@/lib/employment-period";
 import { loadUnitIndex, PATH_SEP } from "@/lib/org-units";
-
-const DEPARTMENTS = [
-  "Management", "Project Management", "Engineering", "Construction",
-  "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
-];
+import { DEPARTMENTS } from "@/lib/departments";
 const ROLES = ["employee", "pd", "ges_pd", "ges_management", "admin", "md"];
 const CLEAR = "-"; // a cell with "-" clears the field; an empty cell leaves it unchanged
 

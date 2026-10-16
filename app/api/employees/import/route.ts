@@ -3,11 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { parseDateOnly } from "@/lib/employment-period";
-
-const DEPARTMENTS = [
-  "Management", "Project Management", "Engineering", "Construction",
-  "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
-];
+import { DEPARTMENTS } from "@/lib/departments";
 const ROLES = ["employee", "pd", "ges_pd", "ges_management", "admin", "md"];
 
 export async function POST(req: NextRequest) {

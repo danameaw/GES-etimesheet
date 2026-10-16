@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import EmployeeBulkUpdate from "@/components/EmployeeBulkUpdate";
+import { DEPARTMENTS } from "@/lib/departments";
 
 interface Employee {
   id: string;
@@ -56,11 +57,6 @@ const ROLES = [
   { value: "ges_pd",        label: "GES Mgmt / PD",   color: "bg-indigo-100 text-indigo-700" },
   { value: "admin",         label: "Admin",            color: "bg-red-100 text-red-700" },
   { value: "md",            label: "MD",               color: "bg-rose-100 text-rose-700" },
-];
-
-const DEPARTMENTS = [
-  "Management", "Project Management", "Engineering", "Construction",
-  "Project Control", "Grid Connection", "BOI", "Admin", "Procurement", "HSE",
 ];
 
 const emptyForm = { employeeId: "", name: "", department: "", position: "", level: "", role: "employee", managedDept: "", isActive: true, startDate: "", endDate: "", orgUnitId: "", managedUnitId: "" };

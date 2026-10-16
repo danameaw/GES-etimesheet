@@ -9,7 +9,8 @@ import {
 } from "@/lib/capacity";
 import { isGesMgmt } from "@/lib/roles";
 import { mgmtScope, scopeEmployeeWhere, loadUnitIndex, PATH_SEP } from "@/lib/org-units";
-import { writeGroupedPlanActualSheet, weekdaysBetween, newAgg, Agg, Group } from "@/lib/export/dept-summary";
+import { writeGroupedPlanActualSheet, weekdaysBetween, newAgg, Agg, Group, writeDeptEmployeeDetailSheet, DeptEmpDetail } from "@/lib/export/dept-summary";
+import { DEPARTMENTS } from "@/lib/departments";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, format } from "date-fns";
@@ -148,6 +149,10 @@ export async function GET(req: NextRequest) {
   const projIds = projectIdsParam ? projectIdsParam.split(",").filter(Boolean) : null;
   const projEntryFilter = projIds ? { projectId: { in: projIds } } : {};
 
+  // Optional department filter for the department report: ?dept=Procurement,HSE (unknown names are ignored)
+  const deptList = (searchParams.get("dept") ?? "").split(",").map((d) => d.trim()).filter((d) => DEPARTMENTS.includes(d));
+  const deptFilter = deptList.length > 0 ? deptList : null;
+
   // Period: custom range, monthly (all weeks in the month), or weekly.
   // Params sent as "yyyy-MM-dd" to avoid timezone shifts.
   const isRange = !!(fromParam && toParam);
@@ -199,14 +204,16 @@ export async function GET(req: NextRequest) {
 
   // Plan vs Actual of every department (and sub-unit) in every project for the chosen period —
   // its own report ("department") and part of the main Excel ("executive")
-  async function writeDepartmentSheets() {
+  async function writeDepartmentSheets(withEmployeeDetail = false) {
     // Plan vs Actual of every department (and sub-unit) in every project for the chosen period.
-    // Actual = submitted/approved hours (no leave) of the period's weeks; Plan = monthly employee plans
-    // pro-rated by the weekdays of each month that fall inside the period.
+    // Actual = submitted/approved hours (no leave) of the period's weeks; leave is its own column;
+    // Plan = monthly employee plans pro-rated by the weekdays of each month that fall inside the period.
+    // withEmployeeDetail adds one Employee → Project → Task sheet per department.
     const empDbId = (session!.user as any).id;
     const idx = await loadUnitIndex();
     const scope = await mgmtScope(empDbId, role, idx);           // GES Management → own department / unit
-    const empWhere = scope.dept ? scopeEmployeeWhere(scope) : {};
+    const scopeWhere = scope.dept ? scopeEmployeeWhere(scope) : {};
+    const empWhere = deptFilter ? { AND: [scopeWhere, { department: { in: deptFilter } }] } : scopeWhere;
     let allowedProjIds: string[] | null = projIds;
     if (role === "pd") {                                         // PD → own projects (PD or PM)
       const own = (await prisma.project.findMany({ where: { OR: [{ pdId: empDbId }, { managerId: empDbId }] }, select: { id: true } })).map((p) => p.id);
@@ -225,21 +232,24 @@ export async function GET(req: NextRequest) {
     }
     const factorOf = new Map(monthsInRange.map((x) => [`${x.year}-${x.month}`, x.factor]));
 
-    const empSel = { select: { id: true, department: true, orgUnitId: true } };
+    const empSel = { select: { id: true, employeeId: true, name: true, department: true, orgUnitId: true } };
     const projSel = { select: { id: true, projectNumber: true, projectName: true } };
-    const [entries, plans] = await Promise.all([
+    const [entries, plans, deptEmployees] = await Promise.all([
       prisma.timesheetEntry.findMany({
         where: {
           timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES }, employee: empWhere },
-          taskCode: { code: { notIn: LEAVE_TASK_CODES } },
           ...projWhere,
         },
-        include: { project: projSel, timesheet: { select: { employee: empSel } } },
+        include: { project: projSel, taskCode: { select: { code: true, name: true } }, timesheet: { select: { employee: empSel } } },
       }),
       prisma.resourcePlanEmployeeMonthly.findMany({
         where: { ...projWhere, employee: empWhere, OR: monthsInRange.map(({ year, month }) => ({ year, month })) },
         include: { project: projSel, employee: empSel },
       }),
+      // everyone employed in the period, so people with no hours still show up in the detail sheets
+      withEmployeeDetail
+        ? prisma.employee.findMany({ where: { AND: [empWhere, employedFrom(weeks[0])] } })
+        : Promise.resolve([]),
     ]);
 
     // aggregate by department / unit / project
@@ -253,26 +263,31 @@ export async function GET(req: NextRequest) {
       if (!inner.has(k2)) inner.set(k2, newAgg());
       return inner.get(k2)!;
     };
-    const add = (emp: { id: string; department: string; orgUnitId: string | null }, proj: { id: string; projectNumber: string; projectName: string }, plan: number, actual: number) => {
+    const add = (emp: { id: string; department: string; orgUnitId: string | null }, proj: { id: string; projectNumber: string; projectName: string }, plan: number, actual: number, leave = 0) => {
       projInfo.set(proj.id, { num: proj.projectNumber, name: proj.projectName });
       for (const a of [bump(deptProj, emp.department, proj.id), bump(unitProj, `${emp.department}|${emp.orgUnitId ?? ""}`, proj.id), bump(projDept, proj.id, emp.department)]) {
-        a.plan += plan; a.actual += actual;
+        a.plan += plan; a.actual += actual; a.leave += leave;
         if (actual > 0) a.people.add(emp.id);
       }
     };
-    for (const e of entries) if (e.totalHrs > 0) add(e.timesheet.employee, e.project, 0, e.totalHrs);
+    for (const e of entries) {
+      if (e.totalHrs <= 0) continue;
+      if (LEAVE_TASK_CODES.includes(e.taskCode.code)) add(e.timesheet.employee, e.project, 0, 0, e.totalHrs);
+      else add(e.timesheet.employee, e.project, 0, e.totalHrs);
+    }
     for (const p of plans) add(p.employee, p.project, p.plannedHrs * (factorOf.get(`${p.year}-${p.month}`) ?? 0), 0);
 
     const byNum = (a: string, b: string) => (projInfo.get(a)?.num ?? "").localeCompare(projInfo.get(b)?.num ?? "");
     const projRows = (m: Map<string, Agg>) => Array.from(m.entries()).sort((a, b) => byNum(a[0], b[0]))
       .map(([pid, agg]) => ({ key: [projInfo.get(pid)!.num, projInfo.get(pid)!.name], agg }));
     const scopeText = scope.managedUnitId ? `หน่วย: ${idx.fullPath(scope.managedUnitId)}` : scope.dept ? `แผนก: ${scope.dept}` : role === "pd" ? "โครงการที่ดูแล" : "ทุกแผนก";
-    const sub = `Period: ${weekLabel}   •   ${scopeText}   •   Plan pro-rate ตามวันทำงานในช่วง · 1 MM = 176 ชม.   •   Generated: ${generatedAt}`;
+    const filterText = deptFilter ? `   •   เลือกแผนก: ${deptFilter.join(", ")}` : "";
+    const sub = `Period: ${weekLabel}   •   ${scopeText}${filterText}   •   Plan pro-rate ตามวันทำงานในช่วง · 1 MM = 176 ชม.   •   Generated: ${generatedAt}`;
     const projCols = [{ header: "Project No.", width: 14 }, { header: "Project Name", width: 40 }];
 
     const deptGroups: Group[] = Array.from(deptProj.entries()).sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dept, m]) => ({ label: dept, rows: projRows(m) }));
-    writeGroupedPlanActualSheet(wb, "Dept x Project", "GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ", sub, projCols, deptGroups, "รวม");
+    const deptSheet = writeGroupedPlanActualSheet(wb, "Dept x Project", "GES E-Timesheet — สรุปรายแผนก แยกตามโครงการ", sub, projCols, deptGroups, "รวม");
 
     // sub-units: only departments that have units
     const deptsWithUnits = new Set(Array.from(idx.byId.values()).map((u) => u.department));
@@ -286,12 +301,53 @@ export async function GET(req: NextRequest) {
     if (unitGroups.length > 0)
       writeGroupedPlanActualSheet(wb, "Unit x Project", "GES E-Timesheet — สรุปรายหน่วยย่อย แยกตามโครงการ", sub, projCols, unitGroups, "รวม");
 
-    const projGroups: Group[] = Array.from(projDept.entries()).sort((a, b) => byNum(a[0], b[0]))
-      .map(([pid, m]) => ({
-        label: `${projInfo.get(pid)!.num} — ${projInfo.get(pid)!.name}`,
-        rows: Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([dept, agg]) => ({ key: [dept], agg })),
-      }));
-    writeGroupedPlanActualSheet(wb, "Project x Dept", "GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก", sub, [{ header: "แผนก", width: 30 }], projGroups, "รวม");
+    // Project x Dept says nothing new when only one department is in the file
+    if (!deptFilter || deptFilter.length > 1) {
+      const projGroups: Group[] = Array.from(projDept.entries()).sort((a, b) => byNum(a[0], b[0]))
+        .map(([pid, m]) => ({
+          label: `${projInfo.get(pid)!.num} — ${projInfo.get(pid)!.name}`,
+          rows: Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([dept, agg]) => ({ key: [dept], agg })),
+        }));
+      writeGroupedPlanActualSheet(wb, "Project x Dept", "GES E-Timesheet — สรุปรายโครงการ แยกตามแผนก", sub, [{ header: "แผนก", width: 30 }], projGroups, "รวม");
+    }
+
+    if (!withEmployeeDetail) return;
+    // One sheet per department: Employee → Project → Task (all hours, holidays split out)
+    const details = new Map<string, DeptEmpDetail>();               // employee db id →
+    const detailOf = (emp: { id: string; employeeId: string; name: string; department: string; orgUnitId: string | null }) => {
+      if (!details.has(emp.id)) details.set(emp.id, {
+        employeeId: emp.employeeId, name: emp.name, department: emp.department,
+        unit: emp.orgUnitId ? idx.names(emp.orgUnitId).join(PATH_SEP) : "", hours: 0, projects: [],
+      });
+      return details.get(emp.id)!;
+    };
+    for (const e of entries) {
+      if (e.totalHrs <= 0) continue;
+      const d = detailOf(e.timesheet.employee);
+      d.hours += e.totalHrs;
+      let p = d.projects.find((x) => x.number === e.project.projectNumber);
+      if (!p) d.projects.push(p = { number: e.project.projectNumber, name: e.project.projectName, hours: 0, tasks: [] });
+      p.hours += e.totalHrs;
+      const t = p.tasks.find((x) => x.code === e.taskCode.code);
+      if (t) t.hours += e.totalHrs;
+      else p.tasks.push({ code: e.taskCode.code, name: e.taskCode.name, hours: e.totalHrs });
+    }
+    for (const emp of deptEmployees) {
+      if (!TIMESHEET_EXEMPT_IDS.has(emp.employeeId) && weeks.some((w) => isEmployedInWeek(emp, w))) detailOf(emp);
+    }
+    const byHours = <T extends { hours: number }>(list: T[]) => list.sort((a, b) => b.hours - a.hours);
+    const depts = Array.from(new Set(Array.from(details.values()).map((d) => d.department))).sort();
+    for (const dept of depts) {
+      const emps = byHours(Array.from(details.values()).filter((d) => d.department === dept));
+      for (const d of emps) { byHours(d.projects); d.projects.forEach((p) => byHours(p.tasks)); }
+      const row = deptSheet.subtotalRows.get(dept);
+      const checkRef = row
+        ? { ref: `'Dept x Project'!${deptSheet.ws.getRow(row).getCell(deptSheet.actualCol).address}`, value: deptProj.get(dept) ? Array.from(deptProj.get(dept)!.values()).reduce((s, a) => s + a.actual, 0) : 0 }
+        : null;
+      const sheetName = dept.replace(/[\\/?*[\]:]/g, " ").slice(0, 31);
+      writeDeptEmployeeDetailSheet(wb, sheetName, `GES E-Timesheet — ${dept}: Employee x Project x Task`,
+        `Period: ${weekLabel}   •   แผนก: ${dept}   •   Generated: ${generatedAt}`, emps, LEAVE_TASK_CODES, checkRef);
+    }
   }
 
   if (type === "weekly") {
@@ -391,7 +447,7 @@ export async function GET(req: NextRequest) {
     await writeDepartmentSheets();
 
   } else if (type === "department") {
-    await writeDepartmentSheets();
+    await writeDepartmentSheets(true);
 
   } else if (type === "plan-actual") {
     // Admin: ทุกแผนก · GES Management: เฉพาะแผนกที่ดูแล (managedDept หรือแผนกตัวเอง) หรือเฉพาะหน่วยที่ดูแล
@@ -722,7 +778,7 @@ export async function GET(req: NextRequest) {
 
   const filename = type === "plan-actual"
     ? `GES_PlanActual_${planActualTag}${role !== "admin" ? "_dept" : ""}_${format(new Date(), "yyyyMMdd")}.xlsx`
-    : `GES_Timesheet_${type}_${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
+    : `GES_Timesheet_${type}_${type === "department" && deptFilter ? `${deptFilter.join("-").replace(/\s+/g, "")}_` : ""}${isRange ? "range_" : isMonth ? "month_" : ""}${periodKey}.xlsx`;
 
   const buf = await wb.xlsx.writeBuffer();
 
