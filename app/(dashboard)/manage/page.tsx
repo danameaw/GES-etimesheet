@@ -551,8 +551,27 @@ function HolidaysTab() {
     setSaving(true);
     const res = await fetch("/api/manage/holidays", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
     setSaving(false);
-    if (res.ok) { setShowAdd(false); setForm({ date: "", name: "", type: "public_holiday" }); load(); }
+    if (res.ok) {
+      const d = await res.json();
+      setShowAdd(false); setForm({ date: "", name: "", type: "public_holiday" }); load();
+      alertBackfill(d.backfill);
+    }
     else alert("Error");
+  };
+
+  const handleBackfill = async (id: string, name: string) => {
+    if (!confirm(`เติม Holiday 8 ชม. ของ "${name}" ให้ timesheet ทุกคนในสัปดาห์นั้น?\n(เติมเฉพาะคนที่ยังไม่ได้ลง ไม่ทับค่าเดิม)`)) return;
+    const res = await fetch(`/api/manage/holidays?id=${id}`, { method: "PATCH" });
+    if (res.ok) alertBackfill((await res.json()).backfill);
+    else alert("Error");
+  };
+
+  const alertBackfill = (b: any) => {
+    if (!b) return;
+    if (b.skipped) return alert(`ไม่ได้เติม timesheet: ${b.skipped}`);
+    const filled = Object.values(b.filled as Record<string, number>).reduce((s, n) => s + n, 0);
+    const byStatus = Object.entries(b.filled).map(([s, n]) => `${s} ${n}`).join(", ");
+    alert(`เติม Holiday ให้ ${filled} จาก ${b.timesheets} timesheet ในสัปดาห์ ${b.weekStart}${byStatus ? ` (${byStatus})` : ""}\nคนที่ยังไม่มี timesheet สัปดาห์นั้น ระบบจะเติมให้เองตอนเปิดหน้า Timesheet`);
   };
 
   const handleDelete = async (id: string, name: string) => {
@@ -633,7 +652,10 @@ function HolidaysTab() {
                           {TYPE_LABELS[h.type] || h.type}
                         </span>
                       </div>
-                      <button onClick={() => handleDelete(h.id, h.name)} className="text-gray-300 hover:text-red-500 text-xl leading-none ml-3">×</button>
+                      <div className="flex items-center ml-3 gap-1">
+                        <button onClick={() => handleBackfill(h.id, h.name)} title="เติม Holiday ให้ timesheet ทุกคน" className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-blue-50 hover:text-blue-700">⟳ เติมให้ทุกคน</button>
+                        <button onClick={() => handleDelete(h.id, h.name)} className="text-gray-300 hover:text-red-500 text-xl leading-none">×</button>
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { backfillHoliday, type HolidayBackfillResult } from "@/lib/holiday-backfill";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -49,7 +50,40 @@ export async function POST(req: NextRequest) {
       type: type || "public_holiday",
     },
   });
-  return NextResponse.json({ holiday });
+
+  // วันหยุดที่เพิ่มย้อนหลัง → เติมให้ timesheet ที่มีอยู่แล้วของทุกคนทันที
+  const backfill = await backfillHoliday(date);
+  await logBackfill(session, holiday.name, backfill);
+  return NextResponse.json({ holiday, backfill });
+}
+
+// เติม Holiday ให้ทุกคนซ้ำสำหรับวันหยุดที่มีอยู่แล้ว (เช่น เพิ่มไว้ก่อนมีระบบ backfill)
+export async function PATCH(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if ((session.user as any).role !== "admin")
+    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+
+  const holiday = await prisma.holiday.findUnique({ where: { id } });
+  if (!holiday) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const backfill = await backfillHoliday(holiday.date.toISOString().slice(0, 10));
+  await logBackfill(session, holiday.name, backfill);
+  return NextResponse.json({ backfill });
+}
+
+async function logBackfill(session: any, name: string, b: HolidayBackfillResult) {
+  const filled = Object.values(b.filled).reduce((s, n) => s + n, 0);
+  await prisma.auditLog.create({
+    data: {
+      employeeId: session.user.id,
+      action: "HOLIDAY_BACKFILL",
+      detail: `${b.date} ${name}: filled ${filled}/${b.timesheets} timesheets ${JSON.stringify(b.filled)}${b.skipped ? ` (skipped: ${b.skipped})` : ""}`,
+    },
+  });
 }
 
 export async function DELETE(req: NextRequest) {
