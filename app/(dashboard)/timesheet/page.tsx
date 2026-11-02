@@ -77,6 +77,11 @@ function meaningfulRows(rows: TimesheetRow[]) {
 }
 
 // ลายเซ็นข้อมูลในตาราง (ไม่รวม id) ไว้เทียบว่ามีการแก้ไขที่ยังไม่ได้บันทึกหรือไม่
+// แถวที่มีชั่วโมงแต่ยังเลือก Project หรือ Task Code ไม่ครบ
+function rowMissingCode(r: TimesheetRow) {
+  return !(r.projectId && r.taskCodeId) && DAYS.some((d) => Number(r[d.key]) > 0);
+}
+
 function rowsSignature(rows: TimesheetRow[]): string {
   return JSON.stringify(meaningfulRows(rows).map(({ id: _id, ...rest }) => rest));
 }
@@ -399,6 +404,16 @@ export default function TimesheetPage() {
   }
 
   async function handleSave(action: "save" | "submit") {
+    // แถวที่กรอกชั่วโมงแล้วแต่ยังไม่มี Project/Task จะไม่ถูกบันทึก — ต้องบล็อกไว้ก่อน
+    // ไม่งั้นตอน Submit ชั่วโมงแถวนั้นจะหายไปเงียบๆ แล้ว timesheet ถูกล็อก
+    const incomplete = rows.filter(rowMissingCode);
+    if (incomplete.length > 0) {
+      setMessage({
+        type: "error",
+        text: `มี ${incomplete.length} แถวที่กรอกชั่วโมงแล้วแต่ยังไม่ได้เลือก Project หรือ Task Code (กรอบสีแดง) — กรุณาเลือกให้ครบหรือลบแถวนั้นก่อนบันทึก`,
+      });
+      return;
+    }
     const validRows = rows.filter((r) => r.projectId && r.taskCodeId);
     if (validRows.length === 0) {
       setMessage({ type: "error", text: "Please add at least one entry with project and task code." });
@@ -670,6 +685,7 @@ export default function TimesheetPage() {
               const rowProjectIsOH   = !!ohProject && row.projectId === ohProject.id;
               const showOHTasks      = rowProjectIsOH || rowIsOH;
               const showProjectTasks = !rowProjectIsOH || (!!selectedTask && !rowIsOH);
+              const missingCode      = canEdit && rowMissingCode(row);
               return (
                 <tr key={row.id}>
                   {/* Project selector — lock to GES-OH if OH task */}
@@ -678,7 +694,7 @@ export default function TimesheetPage() {
                       value={row.projectId}
                       onChange={(e) => updateRow(row.id, "projectId", e.target.value)}
                       disabled={!canEdit || (rowIsOH && rowProjectIsOH)}
-                      className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${rowIsOH ? "border-orange-200 text-orange-700" : "border-gray-200"}`}
+                      className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${missingCode && !row.projectId ? "border-red-500 ring-1 ring-red-300" : rowIsOH ? "border-orange-200 text-orange-700" : "border-gray-200"}`}
                     >
                       <option value="">-- Select Project --</option>
                       {projectGroups.map((g) => (
@@ -703,7 +719,7 @@ export default function TimesheetPage() {
                       value={row.taskCodeId}
                       onChange={(e) => updateRow(row.id, "taskCodeId", e.target.value)}
                       disabled={!canEdit}
-                      className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50"
+                      className={`w-full text-xs border rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white disabled:bg-gray-50 ${missingCode && !row.taskCodeId ? "border-red-500 ring-1 ring-red-300" : "border-gray-200"}`}
                     >
                       <option value="">-- Task --</option>
                       {showProjectTasks && (
