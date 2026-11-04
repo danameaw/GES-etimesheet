@@ -53,6 +53,29 @@ export function monthCompanyCapacity(year: number, month: number, holidays: Set<
   return Math.max(0, STD_MM_HRS - n * HRS_PER_DAY);
 }
 
+/**
+ * ความจุของพนักงานคนหนึ่งในช่วง [periodStart, periodEnd): baseCap ของช่วงนั้น
+ * หักวันทำงาน (จ–ศ ที่ไม่ใช่วันหยุดบริษัท) ก่อนวันเริ่มงาน / หลังวันสุดท้าย × 8
+ * คืน null ถ้าช่วงนั้นไม่ได้เป็นพนักงานเลย (เริ่มหลังช่วง หรือออกก่อนช่วง)
+ */
+export function employeePeriodCapacity(
+  emp: { startDate?: Date | string | null; endDate?: Date | string | null },
+  periodStart: Date, periodEnd: Date, baseCap: number, holidays: Set<string>,
+): number | null {
+  const startKey = toDateKey(periodStart), endKey = toDateKey(periodEnd);
+  const sd = emp.startDate ? toDateKey(normalizeDay(new Date(emp.startDate))) : null;
+  const ed = emp.endDate ? toDateKey(normalizeDay(new Date(emp.endDate))) : null;
+  if (sd && sd >= endKey) return null;
+  if (ed && ed < startKey) return null;
+  let cap = baseCap;
+  for (let t = periodStart.getTime(); t < periodEnd.getTime(); t += DAY_MS) {
+    const k = toDateKey(new Date(t));
+    const outside = (sd !== null && k < sd) || (ed !== null && k > ed);
+    if (outside && isWeekday(k) && !holidays.has(k)) cap -= HRS_PER_DAY;
+  }
+  return Math.max(0, cap);
+}
+
 /** ความจุตามปฏิทินบริษัทของสัปดาห์: 40 − วันหยุดบริษัท × 8 */
 export function weekCompanyCapacity(weekStart: Date, holidays: Set<string>): number {
   const start = normalizeDay(weekStart).getTime();
@@ -96,6 +119,24 @@ export function entryMonthHours(weekStart: Date, entry: Partial<Record<DayField,
 export function entryHoursInRange(weekStart: Date, entry: Partial<Record<DayField, number>>, start: Date, end: Date): number {
   const s = toDateKey(start), e = toDateKey(end);
   return entryDays(weekStart, entry).reduce((sum, [day, hrs]) => (day >= s && day < e ? sum + hrs : sum), 0);
+}
+
+/** สำเนา entry ที่เหลือเฉพาะวันที่อยู่ใน [start, end) — วันนอกช่วงเป็น 0 และ totalHrs คิดใหม่ */
+export function clipEntryToRange<T extends Partial<Record<DayField, number>> & { totalHrs: number }>(
+  weekStart: Date, entry: T, start: Date, end: Date,
+): T {
+  const s = toDateKey(start), e = toDateKey(end);
+  const base = normalizeDay(weekStart).getTime();
+  const out = { ...entry };
+  let total = 0;
+  DAY_FIELDS.forEach((f, i) => {
+    const day = toDateKey(new Date(base + i * DAY_MS));
+    const hrs = day >= s && day < e ? Number(entry[f]) || 0 : 0;
+    (out as Record<DayField, number>)[f] = hrs;
+    total += hrs;
+  });
+  out.totalHrs = total;
+  return out;
 }
 
 /** ตัวกรอง weekStart ที่ครอบคลุมทุกสัปดาห์ที่มีวันตกอยู่ในช่วง [start, end) (เผื่อ ±13h ของข้อมูลเก่า) */

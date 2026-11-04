@@ -9,7 +9,7 @@ import { employedFrom } from "@/lib/employment-period";
 import { loadUnitIndex } from "@/lib/org-units";
 import {
   holidayWeekdaySet, monthCompanyCapacity, weekCompanyCapacity, classifyEntry, entryDays,
-  emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, HRS_PER_DAY, UTILIZATION_TARGET,
+  emptyBreakdown, addHours, availableHrs, pctOf, toDateKey, normalizeDay, employeePeriodCapacity, UTILIZATION_TARGET,
   entryMonthHours, entryHoursInRange, weekStartFilterForRange,
 } from "@/lib/capacity";
 
@@ -444,27 +444,9 @@ export async function GET(req: NextRequest) {
     let counted = 0;
     for (const emp of capEmployees) {
       if (TIMESHEET_EXEMPT_IDS.has(emp.employeeId)) continue;
-      // พนักงานใหม่: หักวันทำงานก่อนวันเริ่มงาน
-      let cap = baseCap;
-      if (emp.startDate) {
-        const sd = toDateKey(normalizeDay(emp.startDate));
-        if (sd >= endKey) continue;
-        for (let t = periodStart.getTime(); toDateKey(new Date(t)) < sd; t += DAY) {
-          const k = toDateKey(new Date(t)); const dow = new Date(t).getUTCDay();
-          if (dow >= 1 && dow <= 5 && !holidays.has(k)) cap -= HRS_PER_DAY;
-        }
-        cap = Math.max(0, cap);
-      }
-      // ลาออก: หักวันทำงานหลังวันสุดท้ายที่ทำงาน
-      if (emp.endDate) {
-        const ed = toDateKey(normalizeDay(emp.endDate));
-        if (ed < startKey) continue;
-        for (let t = periodStart.getTime(); toDateKey(new Date(t)) < endKey; t += DAY) {
-          const k = toDateKey(new Date(t)); const dow = new Date(t).getUTCDay();
-          if (k > ed && dow >= 1 && dow <= 5 && !holidays.has(k)) cap -= HRS_PER_DAY;
-        }
-        cap = Math.max(0, cap);
-      }
+      // พนักงานใหม่ / ลาออก: หักวันทำงานก่อนวันเริ่มงาน และหลังวันสุดท้ายที่ทำงาน
+      const cap = employeePeriodCapacity(emp, periodStart, periodEnd, baseCap, holidays);
+      if (cap === null) continue;
       const b = byEmp.get(emp.id) ?? emptyBreakdown();
       counted++;
       companyHrs += cap;

@@ -144,11 +144,12 @@ export default function AdminPage() {
     } else {
       // Month mode — fetch all weeks in parallel
       const weeks = getWeeksInMonth(currentMonth);
+      const mStr = format(currentMonth, "yyyy-MM");
       const results = await Promise.all(
         weeks.map(async (w) => {
           const wStr = format(w, "yyyy-MM-dd");
           const [eRes, pRes] = await Promise.all([
-            fetch(`/api/admin?week=${wStr}`),
+            fetch(`/api/admin?week=${wStr}&month=${mStr}`),
             fetch(`/api/admin?week=${wStr}&view=project`),
           ]);
           const eData = await eRes.json();

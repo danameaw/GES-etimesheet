@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
-import { isEmployedInWeek, employedFrom } from "@/lib/employment-period";
+import { isEmployedInWeek, employedFrom, monthWindow } from "@/lib/employment-period";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
@@ -19,6 +19,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const weekParam = searchParams.get("week");
   const view      = searchParams.get("view"); // "employee" (default) | "project"
+  // Month view (?month=yyyy-MM): only this week's days inside the month decide whether it's owed
+  const month     = monthWindow(searchParams.get("month"));
 
   const weekStart = weekParam
     ? new Date(weekParam + "T00:00:00.000Z")
@@ -91,7 +93,7 @@ export async function GET(req: NextRequest) {
       timesheetId: ts?.id || null,
       // no timesheet in a week before startDate isn't missing — they hadn't joined yet
       status:      (ts?.status === "submitted" && totalHrs === 0) ? "draft"
-                 : ts?.status || (isEmployedInWeek(emp, weekStart) ? "missing" : "not-employed"),
+                 : ts?.status || (isEmployedInWeek(emp, weekStart, month) ? "missing" : "not-employed"),
       submittedAt: ts?.submittedAt || null,
       totalHrs,
     };
@@ -110,8 +112,8 @@ export async function GET(req: NextRequest) {
 
   // Exempt staff and weeks before an employee's startDate are never counted;
   // PD/MD only count employees in their scope
-  const isRequired = (e: { employeeId: string; startDate: Date | null }) =>
-    !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && isEmployedInWeek(e, weekStart);
+  const isRequired = (e: { employeeId: string; startDate: Date | null; endDate?: Date | null }) =>
+    !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && isEmployedInWeek(e, weekStart, month);
   const isCounted = (e: { id: string; employeeId: string; startDate: Date | null }) =>
     isRequired(e) && (!scopedEmpIds || scopedEmpIds.has(e.id));
   const countRows = employeeRows.filter(isCounted);

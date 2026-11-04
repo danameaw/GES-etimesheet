@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
-import { isEmployedInWeek, employedFrom } from "@/lib/employment-period";
+import { isEmployedInWeek, employedFrom, monthWindow, DateWindow } from "@/lib/employment-period";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import {
-  holidayWeekdaySet, weekCompanyCapacity, classifyEntry, entryDays, emptyBreakdown, addHours, availableHrs, pctOf,
-  entryMonthHours, weekStartFilterForRange,
+  holidayWeekdaySet, weekCompanyCapacity, monthCompanyCapacity, employeePeriodCapacity, classifyEntry, entryDays,
+  emptyBreakdown, addHours, availableHrs, pctOf, entryMonthHours, weekStartFilterForRange, clipEntryToRange, toDateKey, normalizeDay,
 } from "@/lib/capacity";
 import { isGesMgmt } from "@/lib/roles";
 import { mgmtScope, scopeEmployeeWhere, loadUnitIndex, PATH_SEP } from "@/lib/org-units";
@@ -62,8 +62,11 @@ function weekRange(weekStart: Date) {
 // Per-employee utilization for the period, plus the aggregate stats the Dashboard needs.
 // Capacity and required weeks are per employee: only weeks from their startDate count.
 // Chargeable Utilization = project hrs / (capacity - personal leave); see lib/capacity.ts
-async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeks: Date[], isMonth: boolean) {
-  const [allEmployeesRaw, timesheets, holidayRows] = await Promise.all([
+// Monthly (`month` set): only the month's own days count — weeks are owed only if the employee
+// worked one of the month's days in them, capacity is the month's, and hours outside the month are dropped.
+async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEntryFilter: any, weeks: Date[], month: DateWindow | null) {
+  const isMonth = !!month;
+  const [allEmployeesRaw, allTimesheets, holidayRows] = await Promise.all([
     prisma.employee.findMany({ where: employedFrom(weeks[0]), orderBy: { department: "asc" } }),
     prisma.timesheet.findMany({
       where: { weekStart: tsWeekFilter },
@@ -79,8 +82,16 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     }),
   ]);
   const holidays = holidayWeekdaySet(holidayRows);
-  const requiredWeeks = new Map(allEmployeesRaw.map((e) => [e.id, weeks.filter((w) => isEmployedInWeek(e, w)).length]));
+  const requiredWeeks = new Map(allEmployeesRaw.map((e) => [e.id, weeks.filter((w) => isEmployedInWeek(e, w, month)).length]));
+  const monthKeys = month ? { s: toDateKey(month.start), e: toDateKey(month.end) } : null;
+  const monthBaseCap = month ? monthCompanyCapacity(month.start.getUTCFullYear(), month.start.getUTCMonth() + 1, holidays) : 0;
   const allEmployees = allEmployeesRaw.filter((e) => !TIMESHEET_EXEMPT_IDS.has(e.employeeId) && requiredWeeks.get(e.id)! > 0);
+
+  // Monthly: a straddling week the employee doesn't owe this month (e.g. started after the month ended)
+  // doesn't count toward their weeks done / logged either
+  const timesheets = month
+    ? allTimesheets.filter((t) => isEmployedInWeek(t.employee, normalizeDay(t.weekStart), month))
+    : allTimesheets;
 
   const aggMap = new Map<string, { hrs: number; b: ReturnType<typeof emptyBreakdown>; done: number; logged: number; lastStatus: string }>();
   for (const t of timesheets) {
@@ -91,7 +102,10 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     if (DONE_STATUSES.includes(t.status)) {
       for (const e of t.entries) {
         const kind = classifyEntry(e);
-        for (const [day, hrs] of entryDays(t.weekStart, e)) addHours(a.b, kind, day, hrs, holidays);
+        for (const [day, hrs] of entryDays(t.weekStart, e)) {
+          if (monthKeys && (day < monthKeys.s || day >= monthKeys.e)) continue;
+          addHours(a.b, kind, day, hrs, holidays);
+        }
       }
     }
     if (weekHrs > 0) a.logged += 1; // any hours entered that week, regardless of status (draft counts)
@@ -109,7 +123,9 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     const a = aggMap.get(emp.id);
     const empWeeks = requiredWeeks.get(emp.id)!;
     const b = a?.b ?? emptyBreakdown();
-    const companyHrs = weeks.filter((w) => isEmployedInWeek(emp, w)).reduce((s, w) => s + weekCompanyCapacity(w, holidays), 0);
+    const companyHrs = month
+      ? employeePeriodCapacity(emp, month.start, month.end, monthBaseCap, holidays) ?? 0
+      : weeks.filter((w) => isEmployedInWeek(emp, w)).reduce((s, w) => s + weekCompanyCapacity(w, holidays), 0);
     const available = availableHrs(companyHrs, b);
     const status = !a ? "missing" : isMonth ? `${a.done}/${empWeeks} weeks` : a.lastStatus;
     rows.push({
@@ -157,6 +173,10 @@ export async function GET(req: NextRequest) {
   // Params sent as "yyyy-MM-dd" to avoid timezone shifts.
   const isRange = !!(fromParam && toParam);
   const isMonth = !isRange && !!monthParam;
+  // Monthly reports count only the month's own days (weeks are still fetched whole, then clipped)
+  const month = isMonth ? monthWindow(monthParam) : null;
+  const clip = <T extends Parameters<typeof clipEntryToRange>[1]>(weekStart: Date, e: T): T =>
+    month ? clipEntryToRange(weekStart, e, month.start, month.end) : e;
   let tsWeekFilter: { gte: Date; lt: Date };
   let periodLabel: string;
   let periodKey: string;
@@ -196,10 +216,11 @@ export async function GET(req: NextRequest) {
   const subtitle = `Period: ${weekLabel}   •   Generated: ${generatedAt}`;
 
   async function fetchEntries(): Promise<EntryRow[]> {
-    return prisma.timesheetEntry.findMany({
+    const rows = await prisma.timesheetEntry.findMany({
       where: { timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES } }, ...projEntryFilter },
       include: { project: true, taskCode: true, timesheet: { include: { employee: true } } },
     });
+    return month ? rows.map((e) => clip(e.timesheet.weekStart, e)).filter((e) => e.totalHrs > 0) : rows;
   }
 
   // Plan vs Actual of every department (and sub-unit) in every project for the chosen period —
@@ -221,8 +242,8 @@ export async function GET(req: NextRequest) {
     }
     const projWhere = allowedProjIds ? { projectId: { in: allowedProjIds } } : {};
 
-    const rangeStart = weeks[0];
-    const rangeEnd = new Date(weeks[weeks.length - 1].getTime() + 7 * 86400000);
+    const rangeStart = month?.start ?? weeks[0];
+    const rangeEnd = month?.end ?? new Date(weeks[weeks.length - 1].getTime() + 7 * 86400000);
     const monthsInRange: { year: number; month: number; factor: number }[] = [];
     for (let y = rangeStart.getUTCFullYear(), m = rangeStart.getUTCMonth(); Date.UTC(y, m, 1) < rangeEnd.getTime(); m++) {
       if (m > 11) { y++; m = 0; }
@@ -234,13 +255,13 @@ export async function GET(req: NextRequest) {
 
     const empSel = { select: { id: true, employeeId: true, name: true, department: true, orgUnitId: true } };
     const projSel = { select: { id: true, projectNumber: true, projectName: true } };
-    const [entries, plans, deptEmployees] = await Promise.all([
+    const [rawEntries, plans, deptEmployees] = await Promise.all([
       prisma.timesheetEntry.findMany({
         where: {
           timesheet: { weekStart: tsWeekFilter, status: { in: DONE_STATUSES }, employee: empWhere },
           ...projWhere,
         },
-        include: { project: projSel, taskCode: { select: { code: true, name: true } }, timesheet: { select: { employee: empSel } } },
+        include: { project: projSel, taskCode: { select: { code: true, name: true } }, timesheet: { select: { weekStart: true, employee: empSel } } },
       }),
       prisma.resourcePlanEmployeeMonthly.findMany({
         where: { ...projWhere, employee: empWhere, OR: monthsInRange.map(({ year, month }) => ({ year, month })) },
@@ -251,6 +272,8 @@ export async function GET(req: NextRequest) {
         ? prisma.employee.findMany({ where: { AND: [empWhere, employedFrom(weeks[0])] } })
         : Promise.resolve([]),
     ]);
+
+    const entries = rawEntries.map((e) => clip(e.timesheet.weekStart, e));
 
     // aggregate by department / unit / project
     const projInfo = new Map<string, { num: string; name: string }>();
@@ -333,7 +356,7 @@ export async function GET(req: NextRequest) {
       else p.tasks.push({ code: e.taskCode.code, name: e.taskCode.name, hours: e.totalHrs });
     }
     for (const emp of deptEmployees) {
-      if (!TIMESHEET_EXEMPT_IDS.has(emp.employeeId) && weeks.some((w) => isEmployedInWeek(emp, w))) detailOf(emp);
+      if (!TIMESHEET_EXEMPT_IDS.has(emp.employeeId) && weeks.some((w) => isEmployedInWeek(emp, w, month))) detailOf(emp);
     }
     const byHours = <T extends { hours: number }>(list: T[]) => list.sort((a, b) => b.hours - a.hours);
     const depts = Array.from(new Set(Array.from(details.values()).map((d) => d.department))).sort();
@@ -361,7 +384,8 @@ export async function GET(req: NextRequest) {
 
     const rows: (string | number)[][] = [];
     for (const ts of timesheets) {
-      for (const entry of ts.entries) {
+      for (const raw of ts.entries) {
+        const entry = clip(ts.weekStart, raw);
         if (entry.totalHrs === 0) continue;
         rows.push([
           ts.employee.employeeId, ts.employee.name, ts.employee.department,
@@ -405,17 +429,17 @@ export async function GET(req: NextRequest) {
     writeProjectTaskSheet(wb, "By Task", "GES E-Timesheet — Hours by Project & Task", subtitle, tree);
 
   } else if (type === "utilization") {
-    const { rows } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth);
+    const { rows } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, month);
     writeUtilizationSheet(wb, "GES E-Timesheet — Utilization Report", subtitle, rows);
 
   } else if (type === "missing") {
-    const { missing } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth);
+    const { missing } = await computeUtilization(tsWeekFilter, projEntryFilter, weeks, month);
     writeMissingSheet(wb, "GES E-Timesheet — Missing Timesheet Report", subtitle, missing);
 
   } else if (type === "executive") {
     const [entries, util] = await Promise.all([
       fetchEntries(),
-      computeUtilization(tsWeekFilter, projEntryFilter, weeks, isMonth),
+      computeUtilization(tsWeekFilter, projEntryFilter, weeks, month),
     ]);
 
     const projTree = buildProjectTree(entries);
