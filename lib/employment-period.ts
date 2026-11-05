@@ -1,26 +1,36 @@
-// Staff who join mid-period only owe timesheets from the week they started, and
-// staff who leave only up to the week of their last working day.
-// startDate / endDate are optional (null = open). A week counts if any of its
-// 7 days falls inside [startDate, endDate].
-// Monthly views pass `within` (the month): only the week's days inside that month count,
-// so a week that straddles two months is owed to a month only if the employee worked
-// one of that month's days in it (e.g. starting Tue 1 Sep doesn't make week 31 Aug owed to August).
+// Timesheets are submitted per week, but what an employee owes is counted per working day:
+// from their startDate (the day itself, not the whole week) up to their endDate.
+// A week is owed if at least one of its Mon–Fri days falls inside [startDate, endDate]
+// (company holidays included — those days are logged as 1001 Holidays).
+// Monthly views pass `within` (the month) so only that month's days of a straddling week count.
 type EmploymentPeriod = { startDate?: Date | string | null; endDate?: Date | string | null };
 export type DateWindow = { start: Date; end: Date }; // [start, end) — UTC midnights
 
 const DAY_MS = 86400000;
+const dayKey = (t: number) => new Date(t).toISOString().slice(0, 10);
+// weekStart is stored as UTC midnight, or ~17:00Z the day before for old UTC+7 rows → round to the day
+const roundDay = (d: Date | string) => Math.round(new Date(d).getTime() / DAY_MS) * DAY_MS;
+
+/** Owed working days ("yyyy-MM-dd", Mon–Fri) of the week starting `weekStart`, optionally limited to `within` */
+export function owedWorkdays(emp: EmploymentPeriod, weekStart: Date, within?: DateWindow | null): string[] {
+  const start = emp.startDate ? dayKey(roundDay(emp.startDate)) : null;
+  const end = emp.endDate ? dayKey(roundDay(emp.endDate)) : null;
+  const winStart = within ? dayKey(within.start.getTime()) : null;
+  const winEnd = within ? dayKey(within.end.getTime()) : null;
+  const base = roundDay(weekStart);
+  const out: string[] = [];
+  for (let i = 0; i < 5; i++) {            // Mon..Fri
+    const k = dayKey(base + i * DAY_MS);
+    if (start && k < start) continue;
+    if (end && k > end) continue;
+    if (winStart && (k < winStart || k >= winEnd!)) continue;
+    out.push(k);
+  }
+  return out;
+}
 
 export function isEmployedInWeek(emp: EmploymentPeriod, weekStart: Date, within?: DateWindow | null): boolean {
-  let from = weekStart.getTime();
-  let last = from + 6 * DAY_MS;
-  if (within) {
-    from = Math.max(from, within.start.getTime());
-    last = Math.min(last, within.end.getTime() - DAY_MS);
-    if (from > last) return false;
-  }
-  const started = !emp.startDate || new Date(emp.startDate).getTime() <= last;
-  const notLeft = !emp.endDate || new Date(emp.endDate).getTime() >= from;
-  return started && notLeft;
+  return owedWorkdays(emp, weekStart, within).length > 0;
 }
 
 /** "yyyy-MM" or "yyyy-MM-dd" → that calendar month as [1st, 1st of next) in UTC; anything else → null */

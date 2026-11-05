@@ -276,9 +276,16 @@ export function writeUtilizationSheet(
   return ws;
 }
 
+export type MissingRow = {
+  employeeId: string; name: string; department: string; position: string; status: string;
+  owedDays: number;      // working days owed so far in the period (from startDate, Mon–Fri)
+  missingDays: number;   // of those, days whose week isn't submitted/approved
+  missingWeeks: string;  // e.g. "1 Sep–5 Sep (missing), 8 Sep–12 Sep (draft)"
+};
+
 export function writeMissingSheet(
   wb: ExcelJS.Workbook, title: string, subtitle: string,
-  rows: { employeeId: string; name: string; department: string; position: string; status: string }[]
+  rows: MissingRow[]
 ) {
   const ws = wb.addWorksheet("Missing");
   const cols = [
@@ -287,6 +294,9 @@ export function writeMissingSheet(
     { header: "Department", width: 20 },
     { header: "Position", width: 28 },
     { header: "Status", width: 14 },
+    { header: "วันที่ต้องส่ง", width: 12 },
+    { header: "วันที่ขาด", width: 10 },
+    { header: "ช่วงที่ยังไม่ส่ง", width: 60 },
   ];
   ws.columns = cols.map((c) => ({ width: c.width }));
   addTitleBand(ws, title, subtitle, cols.length);
@@ -300,7 +310,7 @@ export function writeMissingSheet(
   let r = headerRowNum + 1;
   let alt = false;
   for (const row of rows) {
-    ws.getRow(r).values = [row.employeeId, row.name, row.department, row.position, row.status];
+    ws.getRow(r).values = [row.employeeId, row.name, row.department, row.position, row.status, row.owedDays, row.missingDays, row.missingWeeks];
     styleDataRow(ws, r, cols.length, alt);
     styleStatusCell(ws.getRow(r).getCell(5), row.status);
     alt = !alt;

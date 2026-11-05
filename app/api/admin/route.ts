@@ -5,6 +5,7 @@ import { isEmployedInWeek, employedFrom, monthWindow } from "@/lib/employment-pe
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
+import { entryHoursInRange } from "@/lib/capacity";
 
 const MS_13H = 13 * 60 * 60 * 1000;
 
@@ -80,9 +81,14 @@ export async function GET(req: NextRequest) {
 
   const timesheetMap = new Map(timesheets.map((t) => [t.employeeId, t]));
 
+  // Month view shows only the hours logged on this month's days of the week
+  const hrsOf = (wk: Date, e: { totalHrs: number }) =>
+    month ? entryHoursInRange(wk, e as any, month.start, month.end) : e.totalHrs;
+
   const employeeRows = allEmployees.map((emp) => {
     const ts = timesheetMap.get(emp.id);
-    const totalHrs = ts?.entries.reduce((sum, e) => sum + e.totalHrs, 0) || 0;
+    const weekHrs  = ts?.entries.reduce((sum, e) => sum + e.totalHrs, 0) || 0;
+    const totalHrs = ts ? ts.entries.reduce((sum, e) => sum + hrsOf(ts.weekStart, e), 0) : 0;
     return {
       id:          emp.id,
       employeeId:  emp.employeeId,
@@ -92,7 +98,7 @@ export async function GET(req: NextRequest) {
       startDate:   emp.startDate,
       timesheetId: ts?.id || null,
       // no timesheet in a week before startDate isn't missing — they hadn't joined yet
-      status:      (ts?.status === "submitted" && totalHrs === 0) ? "draft"
+      status:      (ts?.status === "submitted" && weekHrs === 0) ? "draft"
                  : ts?.status || (isEmployedInWeek(emp, weekStart, month) ? "missing" : "not-employed"),
       submittedAt: ts?.submittedAt || null,
       totalHrs,
@@ -143,11 +149,12 @@ export async function GET(req: NextRequest) {
   // ── Project-view grouping ──────────────────────────────────────────────────
   let projectRows: any[] = [];
   if (view === "project") {
-    // Planned hours for this month (week's month)
-    const year  = weekStart.getUTCFullYear();
-    const month = weekStart.getUTCMonth() + 1;
+    // Planned hours for this month (selected month in month view, else the week's month)
+    const planRef   = month?.start ?? weekStart;
+    const planYear  = planRef.getUTCFullYear();
+    const planMonth = planRef.getUTCMonth() + 1;
     const planData = await prisma.resourcePlanEmployeeMonthly.findMany({
-      where: { year, month },
+      where: { year: planYear, month: planMonth },
       select: { projectId: true, employeeId: true, plannedHrs: true },
     });
     const planMap = new Map<string, number>();
@@ -161,8 +168,9 @@ export async function GET(req: NextRequest) {
     }>();
 
     for (const ts of timesheets) {
-      const tsTotalHrs = ts.entries.reduce((s, e) => s + e.totalHrs, 0);
-      for (const entry of ts.entries) {
+      const tsTotalHrs = ts.entries.reduce((s, e) => s + hrsOf(ts.weekStart, e), 0);
+      for (const raw of ts.entries) {
+        const entry = { ...raw, totalHrs: hrsOf(ts.weekStart, raw) };
         if (entry.totalHrs === 0) continue;
         const p = entry.project;
         // กรองตาม scope (PD = projects ของตัวเอง, MD = GES-OH)

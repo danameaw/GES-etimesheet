@@ -109,6 +109,8 @@ export default function TimesheetPage() {
   const [projects, setProjects]       = useState<Project[]>([]);
   const [taskCodes, setTaskCodes]     = useState<TaskCode[]>([]);
   const [holidays, setHolidays]       = useState<Holiday[]>([]);
+  // ชั่วโมงที่ต้องลงในสัปดาห์นี้ = 8 × วันทำงานนับจากวันเริ่มงาน (เริ่มวันอังคาร → 32h)
+  const [requiredHrs, setRequiredHrs] = useState(40);
   const [rows, setRows]               = useState<TimesheetRow[]>([newRow()]);
   const [timesheetStatus, setTimesheetStatus] = useState<string>("missing");
   const [saving, setSaving]           = useState(false);
@@ -195,6 +197,7 @@ export default function TimesheetPage() {
     if (seq !== loadSeq.current) return; // เปลี่ยนสัปดาห์ระหว่างรอ → ทิ้งผลลัพธ์เก่า
 
     setHolidays(data.holidays || []);
+    setRequiredHrs(typeof data.requiredHrs === "number" ? data.requiredHrs : 40);
 
     // ── ข้อมูลชุดที่อยู่บนระบบ ──
     let serverRows: TimesheetRow[] = [];
@@ -440,8 +443,8 @@ export default function TimesheetPage() {
       setMessage({ type: "error", text: "ไม่สามารถ Submit ได้ กรุณากรอกชั่วโมงก่อน" });
       return;
     }
-    if (action === "submit" && totalWeekHrs < 40) {
-      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than 40h. Submit anyway?`);
+    if (action === "submit" && totalWeekHrs < requiredHrs) {
+      const ok = window.confirm(`Total hours (${totalWeekHrs}h) is less than ${requiredHrs}h. Submit anyway?`);
       if (!ok) return;
     }
 
@@ -641,10 +644,10 @@ export default function TimesheetPage() {
       )}
 
       {/* Hours warning */}
-      {totalWeekHrs > 0 && totalWeekHrs < 40 && (
+      {totalWeekHrs > 0 && totalWeekHrs < requiredHrs && (
         <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-2">
           <span>⚠️</span>
-          <span>ชั่วโมงรวม ({totalWeekHrs}h) ยังไม่ครบ 40h กรุณากรอกข้อมูลให้ครบ</span>
+          <span>ชั่วโมงรวม ({totalWeekHrs}h) ยังไม่ครบ {requiredHrs}h กรุณากรอกข้อมูลให้ครบ{requiredHrs < 40 && " (นับจากวันเริ่มงาน / ถึงวันสุดท้ายที่ทำงาน)"}</span>
         </div>
       )}
 
@@ -801,7 +804,7 @@ export default function TimesheetPage() {
                 );
               })}
               <td className={`text-center font-bold text-base ${
-                totalWeekHrs >= 40 ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
+                totalWeekHrs >= requiredHrs ? "text-green-700" : totalWeekHrs > 0 ? "text-amber-600" : "text-gray-400"
               }`}>
                 {totalWeekHrs > 0 ? totalWeekHrs : "-"}
               </td>
@@ -820,9 +823,9 @@ export default function TimesheetPage() {
             </button>
           )}
           <span className="text-sm text-gray-500">
-            Week total: <span className={`font-bold ${totalWeekHrs >= 40 ? "text-green-700" : "text-amber-600"}`}>
+            Week total: <span className={`font-bold ${totalWeekHrs >= requiredHrs ? "text-green-700" : "text-amber-600"}`}>
               {totalWeekHrs}h
-            </span> / 40h
+            </span> / {requiredHrs}h
             {weekdayHolidays.length > 0 && (
               <span className="text-xs text-red-500 ml-1">
                 ({weekdayHolidays.length} วันหยุด)

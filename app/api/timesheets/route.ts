@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startOfWeek, addDays } from "date-fns";
 import { OH_CATEGORIES, isOverheadProject } from "@/lib/task-constants";
+import { owedWorkdays } from "@/lib/employment-period";
 import {
   HOLIDAY_AUTOFILL_FROM, HOLIDAY_TASK_CODE,
   weekDateStringsUTC, holidayHoursForWeek, applyHolidayHours,
@@ -106,7 +107,15 @@ export async function GET(req: NextRequest) {
     orderBy: { date: "asc" },
   });
 
-  return NextResponse.json({ timesheet, weekStart, weekEnd: addDays(weekStart, 6), holidays });
+  // Hours owed this week: 8 × working days (Mon–Fri) from the employee's startDate to endDate,
+  // so someone starting on Tuesday owes 32h, not 40h
+  const emp = await prisma.employee.findUnique({
+    where: { id: whereClause.employeeId },
+    select: { startDate: true, endDate: true },
+  });
+  const requiredHrs = emp ? owedWorkdays(emp, weekStart).length * 8 : 40;
+
+  return NextResponse.json({ timesheet, weekStart, weekEnd: addDays(weekStart, 6), holidays, requiredHrs });
 }
 
 export async function POST(req: NextRequest) {

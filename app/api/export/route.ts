@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIMESHEET_EXEMPT_IDS } from "@/lib/timesheet-exempt";
-import { isEmployedInWeek, employedFrom, monthWindow, DateWindow } from "@/lib/employment-period";
+import { isEmployedInWeek, owedWorkdays, employedFrom, monthWindow, DateWindow } from "@/lib/employment-period";
 import { LEAVE_TASK_CODES } from "@/lib/task-constants";
 import {
   holidayWeekdaySet, weekCompanyCapacity, monthCompanyCapacity, employeePeriodCapacity, classifyEntry, entryDays,
@@ -23,8 +23,11 @@ import {
 import {
   writeProjectEmployeeTaskSheet, writeEmployeeProjectTaskSheet, writeProjectTaskSheet,
   writeUtilizationSheet, writeMissingSheet, writeDashboardSheet, writeFlatTableSheet,
-  UtilizationRow, HRS_FMT,
+  UtilizationRow, MissingRow, HRS_FMT,
 } from "@/lib/export/sheets";
+
+const MON3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDM = (k: string) => `${Number(k.slice(8, 10))} ${MON3[Number(k.slice(5, 7)) - 1]}`; // "yyyy-MM-dd" → "1 Sep"
 
 // Monday (UTC) of the week containing the given date
 function mondayOfUTC(d: Date): Date {
@@ -114,10 +117,17 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     aggMap.set(t.employeeId, a);
   }
 
-  const submittedIds = new Set(timesheets.filter((t) => DONE_STATUSES.includes(t.status)).map((t) => t.employeeId));
+  // Missing = per owed working day: from the startDate itself (not the whole week) to endDate, Mon–Fri,
+  // only days already past (today included). A day is covered once its week's timesheet is submitted/approved;
+  // any uncovered owed day puts the employee on the Missing list (worst status of those weeks).
+  const tsByEmpWeek = new Map(timesheets.map((t) => [`${t.employeeId}|${toDateKey(normalizeDay(t.weekStart))}`, t]));
+  const todayKey = toDateKey(new Date(Date.now() + 7 * 3600000)); // Bangkok date
+  const RANK = ["missing", "draft", "rejected", "submitted", "approved"];
+  const dueEmployees = new Set<string>();
+  const compliantEmployees = new Set<string>();
 
   const rows: UtilizationRow[] = [];
-  const missing: { employeeId: string; name: string; department: string; position: string; status: string }[] = [];
+  const missing: MissingRow[] = [];
 
   for (const emp of allEmployees) {
     const a = aggMap.get(emp.id);
@@ -125,7 +135,27 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
     const b = a?.b ?? emptyBreakdown();
     const companyHrs = month
       ? employeePeriodCapacity(emp, month.start, month.end, monthBaseCap, holidays) ?? 0
-      : weeks.filter((w) => isEmployedInWeek(emp, w)).reduce((s, w) => s + weekCompanyCapacity(w, holidays), 0);
+      : weeks.reduce((s, w) =>
+          s + (employeePeriodCapacity(emp, w, new Date(w.getTime() + 7 * 86400000), weekCompanyCapacity(w, holidays), holidays) ?? 0), 0);
+
+    let owedDays = 0, missingDays = 0, worst = "approved";
+    const missingWeeks: string[] = [];
+    for (const w of weeks) {
+      const days = owedWorkdays(emp, w, month).filter((d) => d <= todayKey);
+      if (days.length === 0) continue;
+      owedDays += days.length;
+      const st = tsByEmpWeek.get(`${emp.id}|${toDateKey(w)}`)?.status ?? "missing";
+      if (DONE_STATUSES.includes(st)) continue;
+      missingDays += days.length;
+      missingWeeks.push(`${fmtDM(days[0])}${days.length > 1 ? `–${fmtDM(days[days.length - 1])}` : ""} (${st})`);
+      if (RANK.indexOf(st) < RANK.indexOf(worst)) worst = st;
+    }
+    if (owedDays > 0) {
+      dueEmployees.add(emp.id);
+      if (missingDays === 0) compliantEmployees.add(emp.id);
+      else missing.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position,
+        status: worst, owedDays, missingDays, missingWeeks: missingWeeks.join(", ") });
+    }
     const available = availableHrs(companyHrs, b);
     const status = !a ? "missing" : isMonth ? `${a.done}/${empWeeks} weeks` : a.lastStatus;
     rows.push({
@@ -135,14 +165,10 @@ async function computeUtilization(tsWeekFilter: { gte: Date; lt: Date }, projEnt
       overheadPct: pctOf(b.overhead, available),
       weeksLogged: a?.logged || 0, weeksSubmitted: a?.done || 0,
     });
-    if (!submittedIds.has(emp.id)) {
-      const ts = timesheets.find((t) => t.employeeId === emp.id);
-      missing.push({ employeeId: emp.employeeId, name: emp.name, department: emp.department, position: emp.position, status: ts?.status || "missing" });
-    }
   }
 
   const avgUtilization = rows.length > 0 ? rows.reduce((s, r) => s + r.utilization, 0) / rows.length : 0;
-  const complianceRate = allEmployees.length > 0 ? (submittedIds.size / allEmployees.length) * 100 : 0;
+  const complianceRate = dueEmployees.size > 0 ? (compliantEmployees.size / dueEmployees.size) * 100 : 0;
 
   return { rows, missing, avgUtilization, complianceRate, totalActive: allEmployees.length };
 }

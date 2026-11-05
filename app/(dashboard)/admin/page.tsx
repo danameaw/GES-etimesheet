@@ -156,7 +156,12 @@ export default function AdminPage() {
           const pData = await pRes.json();
           return {
             week: w,
-            label: `${format(w, "dd MMM")} – ${format(addDays(w, 6), "dd MMM")}`,
+            // only this month's days of a straddling week (hours in the card are clipped the same way)
+            label: (() => {
+              const from = w < startOfMonth(currentMonth) ? startOfMonth(currentMonth) : w;
+              const to = addDays(w, 6) > endOfMonth(currentMonth) ? endOfMonth(currentMonth) : addDays(w, 6);
+              return from.getTime() === to.getTime() ? format(from, "dd MMM") : `${format(from, "dd MMM")} – ${format(to, "dd MMM")}`;
+            })(),
             projectRows: pData.projectRows || [],
             employees: eData.employees || [],
             summary: eData.summary || null,
@@ -352,7 +357,7 @@ export default function AdminPage() {
             <div className="flex justify-between text-sm mb-2">
               <span className="font-medium text-gray-700">
                 {isPD ? "อนุมัติแล้ว" : "Submission Progress"}
-                {navMode === "month" && <span className="ml-2 text-xs font-normal text-gray-400">นับรายคน · ต้องส่งครบทุกสัปดาห์ในเดือน</span>}
+                {navMode === "month" && <span className="ml-2 text-xs font-normal text-gray-400">นับรายคน · ต้องส่งทุกสัปดาห์ที่มีวันทำงานในเดือน (นับจากวันเริ่มงาน)</span>}
               </span>
               <span className="text-gray-500">
                 {isPD && "อนุมัติ "}{done}/{summary.total} ({Math.round(pct(done))}%)
